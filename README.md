@@ -17,6 +17,8 @@ Interactive Shiny app that surfaces open-science outputs of CIHR Project Grants.
                      └──────────────────┘
 ```
 
+> **Are you a research assistant or undergrad working through a list of grants?** Skip ahead to the [User Guide](USER_GUIDE.md) — it's a step-by-step walkthrough of one grant from search to CSV export, written for people who weren't involved in building the tool.
+
 ## Features
 
 - **Strict + fallback search.** Strict matches use the registry's own `funder + award` linkage (authoritative). Fallback uses PI / ORCID / keyword heuristics for grants where authors didn't cite the award ID.
@@ -64,8 +66,23 @@ Rscript -e 'shiny::runApp("app.R", launch.browser = TRUE)'
 
 ## Documentation
 
-- [ABOUT.md](ABOUT.md) — UI layout, data-source matching strategies, and notes on how grant IDs are normalised across registries. Rendered inside the app under the **About** tab.
-- [USER_GUIDE.md](USER_GUIDE.md) — step-by-step walkthrough aimed at research assistants extracting outputs for a list of grants.
+### [USER_GUIDE.md](USER_GUIDE.md) — for the people doing the data extraction
+
+A practical, no-jargon walkthrough aimed at research assistants and undergrads working through a list of grant numbers. Plan around 20–40 minutes per grant. Covers, in order:
+
+1. Launching the app.
+2. Finding the grant by number and confirming the PI / institution / abstract match.
+3. Running the registry search and reading the **Summary** counts.
+4. Reviewing the **Strict match** tab — rows are pre-ticked by default; untick anything that doesn't belong.
+5. Downloading each paper's PDF (open-access link if available; otherwise UBC Library credentials or Google Scholar) and uploading them one by one to the **PDF extraction** tab to capture CIHR funding evidence, registration IDs, and data deposits.
+6. Reviewing the **Fallback match** tab — rows are *not* pre-ticked here (opposite default to Strict); tick to include after verifying the work belongs to this grant.
+7. Downloading the matched-works CSV and moving to the next grant.
+
+Includes a quick rejection checklist for fallback rows (PI homonyms, pre-grant publications, etc.), a tips-and-traps section (one PDF at a time; new uploads clear previous scans), and a glossary.
+
+### [ABOUT.md](ABOUT.md) — for developers and reviewers
+
+UI layout, the exact strict / fallback queries used at each registry, how CIHR grant IDs are normalised across deposit conventions (`175325_1` → `175325`; with / without `PJT-` prefix), and the parent-versus-thematic-institute funder identity issue that makes the CIHR-family OR clauses necessary. Rendered inside the app under the **About** tab.
 
 ## Project layout
 
