@@ -1519,10 +1519,26 @@ server <- function(input, output, session) {
     strict_view <- strict_for_display()
     strict_rows <- bind_rows(lapply(names(.strict_selection_map), function(api) {
       tbl <- strict_view[[api]]
+      if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
       sel <- input[[.strict_selection_map[[api]]]]
-      if (is.null(tbl) || nrow(tbl) == 0 ||
-          is.null(sel) || length(sel) == 0) return(NULL)
-      sel <- sel[sel >= 1 & sel <= nrow(tbl)]
+      # Strict is opt-out: rows are pre-ticked.  Distinguish:
+      #   is.null(sel)      -> JS select-all hasn't reached us yet
+      #                        (hidden tab, DT init timing, etc.).
+      #                        Fall back to "all rows" so the user
+      #                        gets the default-ticked behaviour even
+      #                        if they download before the input has
+      #                        round-tripped.
+      #   length(sel) == 0  -> user explicitly unticked every row in
+      #                        this bucket.  Honour that, contribute
+      #                        nothing.
+      #   otherwise         -> respect the user's selection.
+      sel <- if (is.null(sel)) {
+        seq_len(nrow(tbl))
+      } else if (length(sel) == 0) {
+        return(NULL)
+      } else {
+        sel[sel >= 1 & sel <= nrow(tbl)]
+      }
       if (length(sel) == 0) return(NULL)
       out <- tbl[sel, , drop = FALSE]
       out$source_api  <- api
