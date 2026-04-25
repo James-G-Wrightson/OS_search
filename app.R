@@ -47,6 +47,21 @@ ui <- page_sidebar(
     uiOutput("grant_info")
   ),
 
+  # Neutralise DataTables' Select-extension row-highlight tint.  The
+  # strict-tab tables are pre-ticked (every row in the CSV by default),
+  # so the constant blue selected-row background is visually noisy.
+  # Keep the checkbox indicator itself untouched — only the row tint
+  # is removed.
+  tags$head(tags$style(HTML(
+    "table.dataTable tbody tr.selected,
+     table.dataTable tbody tr.selected > td,
+     table.dataTable tbody tr > .selected {
+       background-color: inherit !important;
+       color: inherit !important;
+       box-shadow: none !important;
+     }"
+  ))),
+
   add_busy_spinner(spin = "fading-circle", color = "#0d6efd", position = "top-right"),
 
   navset_tab(
@@ -70,7 +85,8 @@ ui <- page_sidebar(
       uiOutput("strict_grant_banner"),
       p("These works explicitly cite the CIHR grant number in the funding metadata of Crossref/OpenAlex/DataCite, or mention the award number in ClinicalTrials.gov."),
       tags$p(tags$small(style = "color:#666",
-        tags$strong("Tick rows"), " to include them in the matched-works CSV download. Unticked strict rows are ignored by the exporter.")),
+        "All strict rows are ", tags$strong("ticked by default"),
+        " and will be added to the matched-works CSV. Untick any rows you want to exclude.")),
       h5("OpenAlex works"),     DTOutput("strict_oa"),
       h5("Europe PMC"),         DTOutput("strict_epmc"),
       h5("Crossref works"),     DTOutput("strict_cr"),
@@ -437,7 +453,8 @@ server <- function(input, output, session) {
   }
 
   .render_dt <- function(tbl, linkcol = "url", selection = "none",
-                         checkbox = FALSE, checkbox_input = NULL) {
+                         checkbox = FALSE, checkbox_input = NULL,
+                         select_all = FALSE) {
     if (is.null(tbl) || nrow(tbl) == 0) return(datatable(data.frame(info = "(no hits)"),
                                                          rownames = FALSE,
                                                          selection = "none",
@@ -524,9 +541,18 @@ server <- function(input, output, session) {
         targets = 0, width = "30px"
       ))
       input_name <- checkbox_input %||% "dt_rows_selected"
+      # When `select_all` is TRUE, programmatically tick every row right
+      # after the listener is wired.  The select() call fires the
+      # listener, which pushes the full index set up to Shiny via
+      # setInputValue — so the CSV builder sees "all ticked" without
+      # the user having to click anything.  Used for the strict tab
+      # where the default is opt-out; fallback stays opt-in
+      # (select_all=FALSE).  Row-highlight tint is suppressed by CSS
+      # injected from the UI head.
+      js_select_all <- if (select_all) "\ntable.rows().select();" else ""
       dt_cb <- DT::JS(sprintf(
-        "table.on('select deselect', function() {\n  var ids = table.rows({selected:true}).indexes().toArray().map(function(i){ return i + 1; });\n  Shiny.setInputValue('%s', ids, {priority:'event'});\n});",
-        input_name
+        "table.on('select deselect', function() {\n  var ids = table.rows({selected:true}).indexes().toArray().map(function(i){ return i + 1; });\n  Shiny.setInputValue('%s', ids, {priority:'event'});\n});%s",
+        input_name, js_select_all
       ))
     }
 
@@ -548,15 +574,15 @@ server <- function(input, output, session) {
   # Each strict DT gets a checkbox column; only ticked rows enter the CSV.
   # `server = FALSE` is required for DT's 'Select' extension (client-side).
   output$strict_oa <- renderDT({ req(result()); .render_dt(strict_for_display()$openalex,
-    checkbox = TRUE, checkbox_input = "strict_oa_rows_selected") }, server = FALSE)
+    checkbox = TRUE, checkbox_input = "strict_oa_rows_selected", select_all = TRUE) }, server = FALSE)
   output$strict_cr <- renderDT({ req(result()); .render_dt(strict_for_display()$crossref,
-    checkbox = TRUE, checkbox_input = "strict_cr_rows_selected") }, server = FALSE)
+    checkbox = TRUE, checkbox_input = "strict_cr_rows_selected", select_all = TRUE) }, server = FALSE)
   output$strict_dc <- renderDT({ req(result()); .render_dt(strict_for_display()$datacite,
-    checkbox = TRUE, checkbox_input = "strict_dc_rows_selected") }, server = FALSE)
+    checkbox = TRUE, checkbox_input = "strict_dc_rows_selected", select_all = TRUE) }, server = FALSE)
   output$strict_ct <- renderDT({ req(result()); .render_dt(strict_for_display()$ctgov,
-    checkbox = TRUE, checkbox_input = "strict_ct_rows_selected") }, server = FALSE)
+    checkbox = TRUE, checkbox_input = "strict_ct_rows_selected", select_all = TRUE) }, server = FALSE)
   output$strict_epmc <- renderDT({ req(result()); .render_dt(strict_for_display()$europepmc,
-    checkbox = TRUE, checkbox_input = "strict_epmc_rows_selected") }, server = FALSE)
+    checkbox = TRUE, checkbox_input = "strict_epmc_rows_selected", select_all = TRUE) }, server = FALSE)
 
   # Map from strict-source key to its checkbox input name, used by the CSV
   # builder to filter each API's tibble to the ticked rows only.
