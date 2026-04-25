@@ -256,6 +256,26 @@ grant_award_number <- function(grant_id) {
 
 # ---- Crossref ---------------------------------------------------------------
 
+# Crossref returns abstracts as JATS XML — `<jats:p>...</jats:p>`, sometimes
+# wrapped in `<jats:sec><jats:title>Background</jats:title>...</jats:sec>`.
+# Strip tags, decode the entities Crossref actually emits, collapse
+# whitespace.  Returns NA_character_ if absent or empty after cleaning so
+# downstream BM25 doesn't tokenise an empty string.
+.crossref_abstract_text <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NA_character_)
+  s <- as.character(x)[1]
+  if (is.na(s) || !nzchar(s)) return(NA_character_)
+  s <- gsub("<[^>]+>", " ", s, perl = TRUE)
+  s <- gsub("&amp;",  "&", s, fixed = TRUE)
+  s <- gsub("&lt;",   "<", s, fixed = TRUE)
+  s <- gsub("&gt;",   ">", s, fixed = TRUE)
+  s <- gsub("&quot;", '"', s, fixed = TRUE)
+  s <- gsub("&#x2014;", "-", s, fixed = TRUE)
+  s <- gsub("&#xa;",   " ", s, fixed = TRUE)
+  s <- str_squish(s)
+  if (!nzchar(s)) NA_character_ else s
+}
+
 crossref_works_by_grant <- function(award_number,
                                     funder_dois = CIHR_CROSSREF_FUNDER_DOIS,
                                     rows = 100) {
@@ -299,6 +319,7 @@ crossref_works_by_grant <- function(award_number,
     source        = "Crossref",
     doi           = it$DOI %||% NA_character_,
     title         = .first(it$title, NA_character_),
+    abstract      = .crossref_abstract_text(it$abstract),
     year          = suppressWarnings(as.integer(.first(.first(it$issued$`date-parts`, list(NA)), NA))),
     venue         = .first(it$`container-title`, NA_character_),
     type          = it$type %||% NA_character_,
@@ -329,6 +350,7 @@ crossref_works_by_pi_funder <- function(pi_name,
     source        = "Crossref",
     doi           = it$DOI %||% NA_character_,
     title         = .first(it$title, NA_character_),
+    abstract      = .crossref_abstract_text(it$abstract),
     year          = suppressWarnings(as.integer(.first(.first(it$issued$`date-parts`, list(NA)), NA))),
     venue         = .first(it$`container-title`, NA_character_),
     type          = it$type %||% NA_character_,
@@ -358,6 +380,7 @@ crossref_works_by_pi_any <- function(pi_name, from_year = 2021, rows = 50) {
     source        = "Crossref",
     doi           = it$DOI %||% NA_character_,
     title         = .first(it$title, NA_character_),
+    abstract      = .crossref_abstract_text(it$abstract),
     year          = suppressWarnings(as.integer(.first(.first(it$issued$`date-parts`, list(NA)), NA))),
     venue         = .first(it$`container-title`, NA_character_),
     type          = it$type %||% NA_character_,
