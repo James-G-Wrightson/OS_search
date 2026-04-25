@@ -83,9 +83,9 @@ ui <- page_sidebar(
       hr(),
       fluidRow(
         column(6, radioButtons(
-          "fb_sources", "Source (one at a time)",
-          choices = c("OpenAlex", "Crossref", "DataCite",
-                      "ClinicalTrials.gov", "OpenAIRE", "Europe PMC"),
+          "fb_sources", "Source (one at a time, ordered by dedup priority)",
+          choices = c("OpenAlex", "Europe PMC", "Crossref",
+                      "DataCite", "OpenAIRE", "ClinicalTrials.gov"),
           selected = "OpenAlex",
           inline = TRUE
         )),
