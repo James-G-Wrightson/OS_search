@@ -788,38 +788,33 @@ server <- function(input, output, session) {
   # Combined list of strict + fallback rows with non-NA DOI, used to
   # auto-link an uploaded PDF to the paper it came from.  Strict-first
   # binding so dedup keeps the strict row when both surface the same DOI.
+  # Carries every column the source rows had so a fabricated `pdf_only`
+  # row inherits abstract/type/venue/pmid/epmc_source/etc., not just a
+  # whitelisted subset.  UI-only artifacts (similarity, match_type) are
+  # dropped so they don't end up in the CSV.
   pdf_link_candidates <- reactive({
     r <- result()
-    if (is.null(r)) return(tibble::tibble(
-      doi = character(), title = character(), year = integer(),
-      venue = character(), source = character(), bucket = character()))
-    cols <- c("doi", "title", "year", "venue", "source", "oa_pdf_url",
-              "url", "openalex_id", "is_oa", "oa_status", "matched_by",
-              "match_class")
+    empty <- tibble::tibble(doi = character(), bucket = character())
+    if (is.null(r)) return(empty)
+    drop_ui <- c("similarity", "match_type")
     strict_view <- tryCatch(strict_for_display(),
                             error = function(e) r$strict)
     strict_rows <- bind_rows(lapply(strict_view, function(t) {
       if (is.null(t) || nrow(t) == 0) return(NULL)
-      keep <- intersect(cols, names(t))
-      out <- t[, keep, drop = FALSE]
+      out <- t[, setdiff(names(t), drop_ui), drop = FALSE]
       out$bucket <- "strict"
       out
     }))
     fb_df <- tryCatch(fallback_all(), error = function(e) tibble::tibble())
     fb_rows <- if (!is.null(fb_df) && nrow(fb_df)) {
-      keep <- intersect(cols, names(fb_df))
-      out <- fb_df[, keep, drop = FALSE]
+      out <- fb_df[, setdiff(names(fb_df), drop_ui), drop = FALSE]
       out$bucket <- "fallback"
       out
     } else NULL
     out <- bind_rows(strict_rows, fb_rows)
-    if (is.null(out) || nrow(out) == 0 || !"doi" %in% names(out)) {
-      return(tibble::tibble(doi = character(), title = character(),
-                            year = integer(), venue = character(),
-                            source = character(), bucket = character()))
-    }
+    if (is.null(out) || nrow(out) == 0 || !"doi" %in% names(out)) return(empty)
     out <- out[!is.na(out$doi) & nzchar(out$doi), , drop = FALSE]
-    if (nrow(out) == 0) return(out)
+    if (nrow(out) == 0) return(empty)
     out$doi <- tolower(out$doi)
     out[!duplicated(out$doi), , drop = FALSE]   # strict-first wins
   })
@@ -1719,11 +1714,12 @@ server <- function(input, output, session) {
             cand_row <- cands[ci[1], , drop = FALSE]
             new_row <- cand_row
             new_row$bucket <- NULL
-            new_row$match_class <- "pdf_only"
-            new_row$matched_by  <- sprintf("PDF extraction (linked to %s)",
-                                            cands$bucket[ci[1]] %||% "row")
-            new_row$grant_id <- input$grant
-            new_row$pi       <- current_row()$pi_full_name
+            new_row$match_class   <- "pdf_only"
+            new_row$matched_by    <- sprintf("PDF extraction (linked to %s)",
+                                              cands$bucket[ci[1]] %||% "row")
+            new_row$matched_award <- input$grant
+            new_row$grant_id      <- input$grant
+            new_row$pi            <- current_row()$pi_full_name
             for (col in PDF_SIGNAL_COLS) {
               incoming <- if (col %in% names(grp)) grp[[col]] else character()
               new_row[[col]] <- .concat_uniq(incoming)
