@@ -44,7 +44,11 @@ ui <- page_sidebar(
                   "Collapse duplicate DOIs across sources",
                   value = TRUE),
     hr(),
-    uiOutput("grant_info")
+    uiOutput("grant_info"),
+    hr(),
+    actionButton("exit_app", "Exit app",
+                 icon = icon("power-off"),
+                 class = "btn-outline-danger")
   ),
 
   # Neutralise DataTables' Select-extension row-highlight tint.  The
@@ -1586,6 +1590,46 @@ server <- function(input, output, session) {
   output$dl_status <- renderText({
     p <- last_saved_path()
     if (is.null(p)) "" else sprintf("Last saved: %s", p)
+  })
+
+  # ---- Exit app ----
+  # If a search has run and the CSV hasn't been saved yet, prompt
+  # before exiting.  `last_saved_path()` is reset to NULL whenever a
+  # new search starts, so it correctly tracks "since the most recent
+  # search".  If no search has run, just exit — there's nothing to
+  # save.
+  observeEvent(input$exit_app, {
+    if (!is.null(result()) && is.null(last_saved_path())) {
+      showModal(modalDialog(
+        title = "Save CSV before exiting?",
+        tags$p("You haven't saved the matched-works CSV for this grant yet."),
+        tags$p(tags$small(style = "color:#666",
+                          "If you exit now, your row selections will be lost.")),
+        footer = tagList(
+          modalButton("Cancel"),
+          actionButton("exit_quit_no_save", "Exit without saving",
+                       class = "btn-outline-danger"),
+          actionButton("exit_save_then_quit", "Save CSV and exit",
+                       class = "btn-primary")
+        ),
+        easyClose = FALSE
+      ))
+    } else {
+      stopApp()
+    }
+  })
+
+  observeEvent(input$exit_save_then_quit, {
+    removeModal()
+    # Skip the overwrite-confirmation modal flow: the user has just
+    # explicitly chosen "save and exit", so silently overwrite.
+    .perform_csv_write()
+    stopApp()
+  })
+
+  observeEvent(input$exit_quit_no_save, {
+    removeModal()
+    stopApp()
   })
 }
 
