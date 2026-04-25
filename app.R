@@ -82,12 +82,11 @@ ui <- page_sidebar(
       uiOutput("fallback_header"),
       hr(),
       fluidRow(
-        column(6, checkboxGroupInput(
-          "fb_sources", "Source",
+        column(6, radioButtons(
+          "fb_sources", "Source (one at a time)",
           choices = c("OpenAlex", "Crossref", "DataCite",
                       "ClinicalTrials.gov", "OpenAIRE", "Europe PMC"),
-          selected = c("OpenAlex", "Crossref", "DataCite",
-                       "ClinicalTrials.gov", "OpenAIRE", "Europe PMC"),
+          selected = "OpenAlex",
           inline = TRUE
         )),
         column(6, checkboxGroupInput(
