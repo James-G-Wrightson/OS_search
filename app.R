@@ -170,6 +170,38 @@ DOWNLOAD_BASE <- file.path(getwd(), "downloads")
   file.path(base, sprintf("%s_%s", grant_id, .pi_surname_slug(family_name, pi_full_name)))
 }
 
+# Map a DOI prefix to its preprint server name when the DOI belongs to
+# a known self-archive registry.  Used to fill venue / is_oa / oa_status
+# for preprints whose upstream metadata records the work but leaves
+# `journalTitle` empty (Europe PMC, Crossref) or `host_venue` mis-typed
+# as not-OA.  Returns NA_character_ for unknown prefixes.
+#
+# 10.1101 covers both bioRxiv and medRxiv; default to "bioRxiv" since
+# bio outweighs med ~10:1 by volume — disambiguation would require
+# fetching the URL, which we explicitly avoid here.
+.PREPRINT_VENUES <- c(
+  "10.1101"   = "bioRxiv",
+  "10.21203"  = "Research Square",
+  "10.31219"  = "OSF Preprints",
+  "10.31234"  = "PsyArXiv",
+  "10.20944"  = "Preprints.org",
+  "10.31222"  = "EarthArXiv",
+  "10.55458"  = "ChemRxiv",
+  "10.48550"  = "arXiv",
+  "10.36227"  = "TechRxiv",
+  "10.32942"  = "EarthArXiv"
+)
+
+.preprint_venue_from_doi <- function(doi) {
+  if (!length(doi)) return(character(0))
+  out <- rep(NA_character_, length(doi))
+  hit <- !is.na(doi) & nzchar(doi)
+  if (!any(hit)) return(out)
+  prefix <- sub("/.*$", "", doi[hit])
+  out[hit] <- unname(.PREPRINT_VENUES[prefix])
+  out
+}
+
 server <- function(input, output, session) {
 
   # First-load default — a grant with both a strict-matched OpenAlex
@@ -1569,18 +1601,27 @@ server <- function(input, output, session) {
     }
     sel <- da$matches[keep_idx, , drop = FALSE]
     pdf_fn <- reg_name() %||% ""
+    linked <- input$pdf_linked_doi %||% ""
+    # Each ticked data-deposit becomes its own row in the CSV — a dataset
+    # is a separate research output, not an attribute of the paper.  When
+    # the PDF is linked, `cited_in_doi` records the citing paper for
+    # traceability, but the dataset row is appended (never merged).
+    # `linked_doi` is forced to "" so the merge logic in .build_csv_out
+    # routes these rows through the unlinked branch unchanged.
     new_rows <- tibble::tibble(
       source          = sel$repository,
       source_api      = sel$repository,
-      match_class     = "pdf_data_deposit",
+      match_class     = "data_deposit",
       doi             = ifelse(grepl("^10\\.", sel$accession), sel$accession, NA_character_),
-      title           = pdf_fn,
+      title           = NA_character_,
       url             = vapply(seq_len(nrow(sel)),
                                function(i) .da_verify_url(sel$repository[i],
                                                           sel$accession[i]),
                                character(1)),
       matched_award   = input$grant,
-      matched_by      = sprintf("PDF extraction (%s; %s)", sel$category, sel$evidence),
+      matched_by      = if (nzchar(linked))
+                          sprintf("Cited as data in PDF (linked to %s)", linked)
+                        else "Data citation in PDF",
       registration_id = NA_character_,
       registry        = NA_character_,
       data_repository = sel$repository,
@@ -1590,7 +1631,8 @@ server <- function(input, output, session) {
       anchor          = NA_character_,
       confidence      = sel$confidence,
       pdf_file        = pdf_fn,
-      linked_doi      = input$pdf_linked_doi %||% ""
+      cited_in_doi    = if (nzchar(linked)) linked else NA_character_,
+      linked_doi      = ""
     )
     extra_rows(bind_rows(extra_rows(), new_rows))
     showNotification(
@@ -1742,6 +1784,30 @@ server <- function(input, output, session) {
     }
 
     if (nrow(er_unlinked)) out <- bind_rows(out, er_unlinked)
+
+    # Preprint enrichment: fill venue / is_oa / oa_status for any row
+    # whose DOI prefix is a known preprint server but whose upstream
+    # metadata left these fields empty (Europe PMC frequently does
+    # this for bioRxiv/medRxiv records).  Preprints are author-self-
+    # archived, so green OA by definition.
+    if ("doi" %in% names(out) && nrow(out)) {
+      pp <- .preprint_venue_from_doi(out$doi)
+      pp_hit <- !is.na(pp)
+      if (any(pp_hit)) {
+        if (!"venue" %in% names(out)) out$venue <- NA_character_
+        if (!"is_oa" %in% names(out)) out$is_oa <- NA
+        if (!"oa_status" %in% names(out)) out$oa_status <- NA_character_
+        v_missing <- is.na(out$venue) | !nzchar(as.character(out$venue))
+        out$venue[pp_hit & v_missing] <- pp[pp_hit & v_missing]
+        # Vectorised "not already TRUE": NA or FALSE both qualify.
+        is_oa_lgl <- suppressWarnings(as.logical(out$is_oa))
+        oa_missing <- is.na(is_oa_lgl) | !is_oa_lgl
+        out$is_oa[pp_hit & oa_missing] <- TRUE
+        st_missing <- is.na(out$oa_status) |
+                      !nzchar(as.character(out$oa_status))
+        out$oa_status[pp_hit & st_missing] <- "green"
+      }
+    }
 
     # Internal handoff column — not informative in the CSV.
     out$linked_doi <- NULL
