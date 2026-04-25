@@ -6,6 +6,11 @@ suppressPackageStartupMessages({
                  purrr, httr2, tibble, jsonlite)
 })
 
+# Shiny's default file-upload cap is 5 MB, which clips many real
+# journal-article PDFs (image-heavy preprints, supplements). Raise to
+# 100 MB so the PDF-extraction tab works for anything plausibly a paper.
+options(shiny.maxRequestSize = 100 * 1024 * 1024)
+
 source("R/data_loader.R")
 source("R/api_clients.R")
 source("R/pdf_convert.R")
