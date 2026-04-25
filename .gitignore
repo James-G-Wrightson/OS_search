@@ -10,7 +10,9 @@
 # Generated / cached data
 cache/
 downloads/
-build/sim_eval_cache/
+
+# Packaging / distribution tooling — kept local, not synced to GitHub
+build/
 
 # R session leftovers
 .Rhistory
