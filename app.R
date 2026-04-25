@@ -67,17 +67,19 @@ ui <- page_sidebar(
     ),
     nav_panel(
       "Strict match (grant ID + funder)",
+      uiOutput("strict_grant_banner"),
       p("These works explicitly cite the CIHR grant number in the funding metadata of Crossref/OpenAlex/DataCite, or mention the award number in ClinicalTrials.gov."),
       tags$p(tags$small(style = "color:#666",
         tags$strong("Tick rows"), " to include them in the matched-works CSV download. Unticked strict rows are ignored by the exporter.")),
-      h5("OpenAlex works"),   DTOutput("strict_oa"),
-      h5("Crossref works"),   DTOutput("strict_cr"),
-      h5("DataCite records"), DTOutput("strict_dc"),
-      h5("ClinicalTrials.gov"), DTOutput("strict_ct"),
-      h5("Europe PMC"),       DTOutput("strict_epmc")
+      h5("OpenAlex works"),     DTOutput("strict_oa"),
+      h5("Europe PMC"),         DTOutput("strict_epmc"),
+      h5("Crossref works"),     DTOutput("strict_cr"),
+      h5("DataCite records"),   DTOutput("strict_dc"),
+      h5("ClinicalTrials.gov"), DTOutput("strict_ct")
     ),
     nav_panel(
       "Fallback match (PI / ORCID / keywords)",
+      uiOutput("fallback_grant_banner"),
       p("Broader search. Useful when the PI didn't acknowledge the award ID, or when the output (e.g. a trial registration, a dataset) doesn't carry grant metadata. Human review required."),
       uiOutput("fallback_header"),
       hr(),
@@ -468,11 +470,21 @@ server <- function(input, output, session) {
     # or Europe PMC fullTextUrlList). Lets the user grab a copy to scan
     # before deciding whether to tick the row for the CSV.
     if ("oa_pdf_url" %in% names(tbl)) {
+      # Open the PDF in a named popup window rather than a tab so the
+      # main app stays visible alongside it (lets the user keep the
+      # grant banner in view while saving the PDF to disk).  The
+      # `popup,width,height` features are what coax modern browsers
+      # (Chrome, Edge, Firefox, Safari) into a window vs. a tab; the
+      # named target `pdfviewer` reuses one window across clicks rather
+      # than spawning a fresh one each time.  Browser-level prefs (e.g.
+      # Firefox's "open new windows in tabs") can still override this —
+      # nothing JS-side can bypass that.
       tbl$oa_pdf_url <- ifelse(
         is.na(tbl$oa_pdf_url) | tbl$oa_pdf_url == "",
         '<span style="color:#999">—</span>',
-        sprintf('<a href="%s" target="_blank" rel="noopener" title="Direct OA PDF">PDF ⬇</a>',
-                tbl$oa_pdf_url)
+        sprintf(
+          '<a href="%s" onclick="window.open(this.href,\'pdfviewer\',\'popup=yes,width=1100,height=850,resizable=yes,scrollbars=yes\'); return false;" rel="noopener" title="Open PDF in popup window (one window, reused)">PDF ⬇</a>',
+          tbl$oa_pdf_url)
       )
     }
     # Highlight the award column: when the current grant's award number
@@ -555,6 +567,30 @@ server <- function(input, output, session) {
     ctgov     = "strict_ct_rows_selected",
     europepmc = "strict_epmc_rows_selected"
   )
+
+  # ---- Grant banner shown at the top of the strict + fallback tabs.
+  # Surfaces the grant ID and the matching download-folder name so the
+  # user can pick the right folder when saving a PDF without flipping
+  # back to the sidebar.  Rendered into two outputs (one per tab); the
+  # ID can't appear twice in the DOM.
+  .grant_banner_ui <- function() {
+    r <- result()
+    if (is.null(r) || is.null(r$grant)) return(NULL)
+    folder <- sprintf("%s_%s",
+                      r$grant$grant_id,
+                      .pi_surname_slug(r$grant$family_name,
+                                       r$grant$pi_full_name))
+    tags$div(
+      style = "padding:0.55em 0.85em; margin-bottom:0.6em; background:#e7f1ff; border-left:4px solid #0d6efd; border-radius:3px; font-size:1.0em",
+      tags$strong("Grant: "),
+      tags$span(style = "font-family:monospace; font-size:1.1em",
+                r$grant$grant_id %||% "—"),
+      tags$span(style = "color:#555; margin-left:1.5em", "Download folder: "),
+      tags$span(style = "font-family:monospace", folder)
+    )
+  }
+  output$strict_grant_banner   <- renderUI({ req(result()); .grant_banner_ui() })
+  output$fallback_grant_banner <- renderUI({ req(result()); .grant_banner_ui() })
 
   # ---- Fallback header: ORCID + keywords used ----
   output$fallback_header <- renderUI({
