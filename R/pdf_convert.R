@@ -175,6 +175,32 @@ ensure_pdf_venv <- function(verbose = TRUE) {
   file.path(getwd(), "py", "scan_paper.py")
 }
 
+# Match a PDF filename against a list of candidate DOIs by checking
+# whether each DOI's suffix (everything after the first slash) is a
+# substring of the filename stem.  Used to auto-link an uploaded PDF
+# to a strict/fallback row already in the result set.
+#
+# Filenames typically include the DOI suffix verbatim ("2025.01.09.632139"
+# in "2025.01.09.632139v2.full.pdf" matches DOI 10.1101/2025.01.09.632139).
+# Strips bioRxiv/medRxiv version markers (vN, .full, .full-text, _N) before
+# matching.  When multiple DOIs match, the longest suffix wins (more
+# specific suffix beats accidental prefix overlap).
+match_doi_from_filename <- function(filename, candidate_dois) {
+  if (!length(candidate_dois) || !nzchar(filename %||% "")) return("")
+  cs <- candidate_dois[!is.na(candidate_dois) & nzchar(candidate_dois)]
+  if (!length(cs)) return("")
+  stem <- tools::file_path_sans_ext(basename(filename))
+  stem <- sub("(\\.full(-text)?|v\\d+|_\\d+)+$", "", stem, ignore.case = TRUE)
+  if (nchar(stem) < 6) return("")
+  s <- tolower(stem)
+  suffixes <- tolower(sub("^[^/]+/", "", cs))
+  hits <- vapply(suffixes, function(x) {
+    nzchar(x) && grepl(x, s, fixed = TRUE)
+  }, logical(1))
+  if (!any(hits)) return("")
+  cs[hits][which.max(nchar(suffixes[hits]))]
+}
+
 # Convert a PDF on disk to markdown, returning the markdown text.
 # Extraction is fully local: pymupdf4llm (rule-based, no ML, no network).
 pdf_to_markdown <- function(pdf_path) {

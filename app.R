@@ -603,6 +603,20 @@ server <- function(input, output, session) {
     europepmc = "strict_epmc_rows_selected"
   )
 
+  # Columns produced by PDF extraction handlers that should be merged
+  # onto the source paper's row in the CSV when a linked_doi is set.
+  # When a target row already has a value in one of these cols, values
+  # are concatenated with "; " (deduped).  Note `doi` is NOT in this
+  # list — the source row's DOI is authoritative; data-deposit rows
+  # carry a separate `data_accession`.
+  PDF_SIGNAL_COLS <- c(
+    "registration_id", "registry",
+    "data_repository", "data_accession",
+    "cihr_grant_ids",
+    "section", "sentence", "anchor", "confidence",
+    "pdf_file"
+  )
+
   # ---- Grant banner shown at the top of the strict + fallback tabs.
   # Surfaces the grant ID and the matching download-folder name so the
   # user can pick the right folder when saving a PDF without flipping
@@ -770,6 +784,87 @@ server <- function(input, output, session) {
     tbl[sel, , drop = FALSE]
   })
 
+  # ---- PDF -> source-paper linking ----
+  # Combined list of strict + fallback rows with non-NA DOI, used to
+  # auto-link an uploaded PDF to the paper it came from.  Strict-first
+  # binding so dedup keeps the strict row when both surface the same DOI.
+  pdf_link_candidates <- reactive({
+    r <- result()
+    if (is.null(r)) return(tibble::tibble(
+      doi = character(), title = character(), year = integer(),
+      venue = character(), source = character(), bucket = character()))
+    cols <- c("doi", "title", "year", "venue", "source", "oa_pdf_url",
+              "url", "openalex_id", "is_oa", "oa_status", "matched_by",
+              "match_class")
+    strict_view <- tryCatch(strict_for_display(),
+                            error = function(e) r$strict)
+    strict_rows <- bind_rows(lapply(strict_view, function(t) {
+      if (is.null(t) || nrow(t) == 0) return(NULL)
+      keep <- intersect(cols, names(t))
+      out <- t[, keep, drop = FALSE]
+      out$bucket <- "strict"
+      out
+    }))
+    fb_df <- tryCatch(fallback_all(), error = function(e) tibble::tibble())
+    fb_rows <- if (!is.null(fb_df) && nrow(fb_df)) {
+      keep <- intersect(cols, names(fb_df))
+      out <- fb_df[, keep, drop = FALSE]
+      out$bucket <- "fallback"
+      out
+    } else NULL
+    out <- bind_rows(strict_rows, fb_rows)
+    if (is.null(out) || nrow(out) == 0 || !"doi" %in% names(out)) {
+      return(tibble::tibble(doi = character(), title = character(),
+                            year = integer(), venue = character(),
+                            source = character(), bucket = character()))
+    }
+    out <- out[!is.na(out$doi) & nzchar(out$doi), , drop = FALSE]
+    if (nrow(out) == 0) return(out)
+    out$doi <- tolower(out$doi)
+    out[!duplicated(out$doi), , drop = FALSE]   # strict-first wins
+  })
+
+  # The dropdown shell renders only when a PDF is uploaded; choices and
+  # selection are filled in by the observer below so a manual override
+  # survives subsequent rescans.  Returns NULL (not req()) pre-upload
+  # so smoke_test.R's renderUI probe doesn't trip a silent exception.
+  output$pdf_link_ui <- renderUI({
+    if (is.null(input$pdf_file)) return(NULL)
+    selectizeInput(
+      "pdf_linked_doi",
+      label = "Linked source paper (auto-detected from filename — change if wrong)",
+      choices = c("(no source paper — keep PDF row standalone)" = ""),
+      selected = "", width = "100%",
+      options = list(placeholder = "Pick a strict/fallback paper this PDF belongs to")
+    )
+  })
+
+  # Build the dropdown choices from the candidate list and pre-select the
+  # auto-detected DOI (filename suffix match).  Fires on every new upload.
+  observeEvent(input$pdf_file, {
+    cands <- tryCatch(pdf_link_candidates(), error = function(e) NULL)
+    if (is.null(cands) || !nrow(cands)) {
+      updateSelectizeInput(session, "pdf_linked_doi",
+        choices = c("(no source paper)" = ""), selected = "")
+      return()
+    }
+    titles <- cands$title %||% rep("", nrow(cands))
+    titles <- ifelse(is.na(titles), "", titles)
+    titles <- substr(titles, 1, 60)
+    yr <- if ("year" %in% names(cands)) cands$year else rep(NA, nrow(cands))
+    src <- if ("source" %in% names(cands)) cands$source else rep("", nrow(cands))
+    labels <- sprintf("%s • %s • %s — %s",
+                      cands$doi,
+                      ifelse(is.na(yr), "—", as.character(yr)),
+                      ifelse(is.na(src), "", src),
+                      titles)
+    choices <- c("(no source paper — keep PDF row standalone)" = "",
+                 setNames(cands$doi, labels))
+    auto <- match_doi_from_filename(input$pdf_file$name, cands$doi)
+    updateSelectizeInput(session, "pdf_linked_doi",
+                         choices = choices, selected = auto)
+  }, ignoreInit = TRUE)
+
   # ---- PDF -> Registration + Data-availability detection ----
   reg_result <- reactiveVal(NULL)   # registration extractor JSON
   da_result  <- reactiveVal(NULL)   # data-availability extractor JSON
@@ -893,6 +988,7 @@ server <- function(input, output, session) {
         column(8,
           fileInput("pdf_file", "PDF file", accept = c("application/pdf", ".pdf"),
                     buttonLabel = "Browse...", placeholder = "No file selected"),
+          uiOutput("pdf_link_ui"),
           actionButton("pdf_detect", "Scan paper", class = "btn-primary"),
           tags$span(style = "margin-left:1em", textOutput("pdf_status", inline = TRUE))
         )
@@ -1228,7 +1324,8 @@ server <- function(input, output, session) {
       sentence        = sel$sentence,
       anchor          = sel$anchor,
       confidence      = sel$confidence,
-      pdf_file        = pdf_fn
+      pdf_file        = pdf_fn,
+      linked_doi      = input$pdf_linked_doi %||% ""
     )
     extra_rows(bind_rows(extra_rows(), new_rows))
     showNotification(
@@ -1297,7 +1394,8 @@ server <- function(input, output, session) {
       anchor          = NA_character_,
       confidence      = sel$confidence,
       cihr_grant_ids  = gids_str,
-      pdf_file        = pdf_fn
+      pdf_file        = pdf_fn,
+      linked_doi      = input$pdf_linked_doi %||% ""
     )
     extra_rows(bind_rows(extra_rows(), new_rows))
     showNotification(
@@ -1496,7 +1594,8 @@ server <- function(input, output, session) {
       sentence        = sel$sentence,
       anchor          = NA_character_,
       confidence      = sel$confidence,
-      pdf_file        = pdf_fn
+      pdf_file        = pdf_fn,
+      linked_doi      = input$pdf_linked_doi %||% ""
     )
     extra_rows(bind_rows(extra_rows(), new_rows))
     showNotification(
@@ -1512,6 +1611,16 @@ server <- function(input, output, session) {
 
   # Build the CSV output data frame from the strict and fallback rows the
   # user has ticked, plus any PDF-extracted extras queued for this grant.
+  #
+  # PDF rows carry a `linked_doi` set by the user in the PDF tab.  When
+  # that DOI matches a row already in `out` (a ticked strict/fallback
+  # paper), the PDF's signal columns are merged into that row so each
+  # paper appears once.  When the linked DOI is in the candidate set
+  # but the source row wasn't ticked, a new row is fabricated from the
+  # candidate's metadata so the PDF still has full bibliographic
+  # context.  Truly unlinked PDFs (or PDFs whose linked DOI is no
+  # longer in either set) keep the historical filename-as-title
+  # behaviour, appended at the bottom.
   .build_csv_out <- function() {
     r <- result()
     # Use the deduped view when the toggle is on so the CSV mirrors what
@@ -1554,12 +1663,92 @@ server <- function(input, output, session) {
     out <- bind_rows(strict_rows, fb_sel)
     out$grant_id <- input$grant
     out$pi       <- current_row()$pi_full_name
+
     er <- extra_rows()
-    if (!is.null(er) && nrow(er)) {
-      er$grant_id <- input$grant
-      er$pi       <- current_row()$pi_full_name
-      out <- bind_rows(out, er)
+    if (is.null(er) || !nrow(er)) return(out)
+
+    er$grant_id <- input$grant
+    er$pi       <- current_row()$pi_full_name
+    if (!"linked_doi" %in% names(er)) er$linked_doi <- ""
+
+    # Pre-create signal columns + pdf_match_class on `out` so per-row
+    # writes during the merge loop don't trip over missing columns.
+    for (col in c(PDF_SIGNAL_COLS, "pdf_match_class")) {
+      if (!col %in% names(out)) out[[col]] <- NA_character_
     }
+
+    # Concat helper: drops NA/empty, dedupes, joins with "; ".
+    .concat_uniq <- function(vals) {
+      vals <- as.character(vals)
+      vals <- vals[!is.na(vals) & nzchar(vals)]
+      if (!length(vals)) return(NA_character_)
+      paste(unique(vals), collapse = "; ")
+    }
+
+    has_link <- !is.na(er$linked_doi) & nzchar(er$linked_doi)
+    er_linked   <- er[ has_link, , drop = FALSE]
+    er_unlinked <- er[!has_link, , drop = FALSE]
+
+    out_doi_lc <- if ("doi" %in% names(out) && nrow(out)) tolower(out$doi)
+                  else character(nrow(out))
+
+    if (nrow(er_linked)) {
+      cands <- tryCatch(pdf_link_candidates(),
+                        error = function(e) tibble::tibble())
+      cand_doi_lc <- if ("doi" %in% names(cands) && nrow(cands)) tolower(cands$doi)
+                     else character()
+
+      stale <- list()
+      keys <- tolower(er_linked$linked_doi)
+      for (k in unique(keys)) {
+        grp <- er_linked[keys == k, , drop = FALSE]
+        idx <- which(!is.na(out_doi_lc) & nzchar(out_doi_lc) & out_doi_lc == k)
+        if (length(idx)) {
+          ti <- idx[1]
+          for (col in PDF_SIGNAL_COLS) {
+            existing <- out[[col]][ti]
+            incoming <- if (col %in% names(grp)) grp[[col]] else character()
+            out[[col]][ti] <- .concat_uniq(c(existing, incoming))
+          }
+          mc_in <- if ("match_class" %in% names(grp)) grp$match_class else character()
+          out[["pdf_match_class"]][ti] <- .concat_uniq(
+            c(out[["pdf_match_class"]][ti], mc_in))
+        } else {
+          ci <- which(!is.na(cand_doi_lc) & cand_doi_lc == k)
+          if (length(ci)) {
+            cand_row <- cands[ci[1], , drop = FALSE]
+            new_row <- cand_row
+            new_row$bucket <- NULL
+            new_row$match_class <- "pdf_only"
+            new_row$matched_by  <- sprintf("PDF extraction (linked to %s)",
+                                            cands$bucket[ci[1]] %||% "row")
+            new_row$grant_id <- input$grant
+            new_row$pi       <- current_row()$pi_full_name
+            for (col in PDF_SIGNAL_COLS) {
+              incoming <- if (col %in% names(grp)) grp[[col]] else character()
+              new_row[[col]] <- .concat_uniq(incoming)
+            }
+            mc_in <- if ("match_class" %in% names(grp)) grp$match_class else character()
+            new_row[["pdf_match_class"]] <- .concat_uniq(mc_in)
+            out <- bind_rows(out, new_row)
+            out_doi_lc <- c(out_doi_lc, k)
+          } else {
+            # Stale link (candidate set changed since user added row,
+            # or DOI never existed).  Fall through to unlinked branch.
+            stale[[length(stale) + 1L]] <- grp
+          }
+        }
+      }
+
+      if (length(stale)) {
+        er_unlinked <- bind_rows(er_unlinked, bind_rows(stale))
+      }
+    }
+
+    if (nrow(er_unlinked)) out <- bind_rows(out, er_unlinked)
+
+    # Internal handoff column — not informative in the CSV.
+    out$linked_doi <- NULL
     out
   }
 
