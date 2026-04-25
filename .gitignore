@@ -21,6 +21,10 @@ build/
 # Detector regression fixtures — kept local, not synced to GitHub
 test_pdfs/
 
+# Developer tooling / AI-assistant scaffolding — kept local, not synced to GitHub
+smoke_test.R
+CLAUDE.md
+
 # R session leftovers
 .Rhistory
 .Rapp.history
