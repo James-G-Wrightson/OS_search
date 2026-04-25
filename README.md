@@ -113,4 +113,14 @@ This app uses public APIs from Crossref, OpenAlex, DataCite, ClinicalTrials.gov,
 
 ## License
 
-No license has been specified yet. Until one is added, default copyright applies — code is visible but not licensed for reuse. If you'd like to use, modify, or distribute this work, please open an issue.
+Copyright © 2026 James Wrightson.
+
+OS_search is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public License v3.0** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. The full license text is in [LICENSE](LICENSE) at the repository root.
+
+This program is distributed in the hope that it will be useful, but **without any warranty**; without even the implied warranty of merchantability or fitness for a particular purpose. See the GPL for details.
+
+In short:
+
+- You can use, modify, and redistribute the code freely.
+- If you distribute a modified version, it must also be GPL-3.0 and ship its source.
+- The GPL choice is partly forced by upstream: the data-availability detector is adapted from [ODDPub](https://github.com/quest-bih/oddpub), which is GPL-3.0.
