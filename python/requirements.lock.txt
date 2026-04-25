@@ -1,0 +1,8 @@
+# Pinned Python deps for the packaged Shiny env.
+# Installed via `pip install -r python/requirements.lock.txt` inside the
+# micromamba env created from environment.yml. numpy comes from conda-forge
+# (see environment.yml); everything here is pulled from PyPI wheels.
+pymupdf4llm==1.27.2.2
+PyMuPDF==1.27.2.2
+pymupdf-layout==1.27.2.2
+onnxruntime==1.24.4
