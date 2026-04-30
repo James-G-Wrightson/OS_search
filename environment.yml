@@ -2,20 +2,10 @@ name: os_search
 channels:
   - conda-forge
 dependencies:
-  - r-base=4.4
-  - r-shiny
-  - r-bslib
-  - r-dt
-  - r-shinybusy
-  - r-dplyr
-  - r-stringr
-  - r-purrr
-  - r-tibble
-  - r-readxl
-  - r-readr
-  - r-httr2
-  - r-jsonlite
-  - r-httpuv
+  # System / language toolchain only. R package versions are pinned in
+  # renv.lock and installed by `renv::restore()` after env activation.
+  - r-base=4.5
+  - r-renv
   - python=3.12
   - pip
   - numpy

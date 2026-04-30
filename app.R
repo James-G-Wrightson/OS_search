@@ -1,9 +1,8 @@
-if (!requireNamespace("pacman", quietly = TRUE)) {
-  install.packages("pacman", repos = "https://cloud.r-project.org")
-}
 suppressPackageStartupMessages({
-  pacman::p_load(shiny, bslib, DT, dplyr, stringr, shinybusy,
-                 purrr, httr2, tibble, jsonlite)
+  library(shiny); library(bslib); library(DT); library(dplyr)
+  library(stringr); library(shinybusy); library(purrr)
+  library(httr2); library(tibble); library(jsonlite)
+  library(markdown)
 })
 
 # Shiny's default file-upload cap is 5 MB, which clips many real

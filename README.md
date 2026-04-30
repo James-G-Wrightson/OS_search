@@ -32,7 +32,7 @@ Interactive Shiny app that surfaces open-science outputs of CIHR Project Grants.
 
 ## Quick start
 
-You need **R 4.2+** and **Python 3.10+** on your `PATH`. Everything else is handled on first launch — R packages load via `pacman`, and the app creates `.venv/` and installs `pymupdf4llm` from [python/requirements.lock.txt](python/requirements.lock.txt) the first time it starts.
+You need **R 4.2+** and **Python 3.10+** on your `PATH`. R packages are pinned with [`renv`](https://rstudio.github.io/renv/) — restore the project library from [renv.lock](renv.lock) on first checkout, and the app creates `.venv/` and installs `pymupdf4llm` from [python/requirements.lock.txt](python/requirements.lock.txt) the first time it starts.
 
 The app reads `app.R`, `R/`, `python/`, and the grant workbook relative to the current working directory, so launch from the project root.
 
@@ -40,6 +40,7 @@ From a macOS / Linux terminal:
 
 ```sh
 cd /path/to/OS_search
+Rscript -e 'renv::restore()'   # first checkout only
 Rscript -e 'shiny::runApp("app.R", launch.browser = TRUE)'
 ```
 
@@ -47,6 +48,7 @@ From the Windows Command Prompt or PowerShell:
 
 ```bat
 cd C:\path\to\OS_search
+Rscript -e "renv::restore()"
 Rscript -e "shiny::runApp('app.R', launch.browser = TRUE)"
 ```
 
@@ -56,11 +58,12 @@ If Python is missing or too old, the **PDF extraction** tab degrades to an expla
 
 ### Conda alternative
 
-For a fully reproducible environment (pinned R + Python + system deps):
+For a fully reproducible environment (pinned R + Python + system deps). Conda solves the toolchain; `renv::restore()` installs R packages from [renv.lock](renv.lock) on top:
 
 ```sh
 conda env create -f environment.yml
 conda activate os_search
+Rscript -e 'renv::restore()'
 Rscript -e 'shiny::runApp("app.R", launch.browser = TRUE)'
 ```
 
