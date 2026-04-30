@@ -34,3 +34,6 @@ CLAUDE.md
 # Editor / OS junk
 *~
 *.swp
+
+# User-testing scaffolding (SOPs, templates, results) — kept local, not synced
+Tests/
