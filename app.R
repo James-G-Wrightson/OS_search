@@ -24,6 +24,14 @@ UG <- unique_grants(PG)
 # the UI degrades the PDF tab to an explanatory alert instead of crashing.
 PDF_VENV_STATUS <- ensure_pdf_venv()
 
+# Auto-PDF-download tunables.  Defined before `ui` so the fallback
+# similarity-threshold UI default tracks the same value the auto-download
+# hook in result() filters on (rows above 0.19 are pre-ticked AND auto-
+# downloaded).  Cap protects the user from a runaway high-volume PI
+# whose fallback list is hundreds long.
+AUTO_DL_FB_THRESHOLD <- 0.19
+AUTO_DL_CAP          <- 50L
+
 ui <- page_sidebar(
   title = "CIHR Project Grant \u2192 Open Outputs Explorer (prototype)",
   theme = bs_theme(bootswatch = "flatly"),
@@ -132,11 +140,13 @@ ui <- page_sidebar(
         )),
         column(6, numericInput(
           "fb_sim_threshold", "Similarity threshold",
-          value = 0.00, min = 0, max = 1, step = 0.05, width = "120px"
+          value = AUTO_DL_FB_THRESHOLD, min = 0, max = 1, step = 0.05,
+          width = "120px"
         ))
       ),
       tags$p(tags$small(style = "color:#666",
-        tags$strong("Tick rows"), " to include them in the matched-works CSV download. Unticked fallback rows are ignored by the exporter.")),
+        "Rows above the threshold are ", tags$strong("ticked by default"),
+        " and will be added to the matched-works CSV. Untick any rows you want to exclude. Lowering the threshold reveals more rows; new rows stay un-ticked.")),
       DTOutput("fb_table")
     ),
     nav_panel(
@@ -169,12 +179,6 @@ DOWNLOAD_BASE <- file.path(getwd(), "downloads")
                           base = DOWNLOAD_BASE) {
   file.path(base, sprintf("%s_%s", grant_id, .pi_surname_slug(family_name, pi_full_name)))
 }
-
-# Auto-PDF-download tunables.  Threshold matches the fallback-tab UI default
-# (rows above 0.19 are pre-ticked + auto-downloaded); cap protects the user
-# from a runaway high-volume PI whose fallback list is hundreds long.
-AUTO_DL_FB_THRESHOLD <- 0.19
-AUTO_DL_CAP          <- 50L
 
 # Strict download set: union of all five strict buckets, restricted to rows
 # where the upstream surfaced an OA PDF URL.  Source-agnostic so future
@@ -894,8 +898,16 @@ server <- function(input, output, session) {
                           after = which(remaining == "venue")),
                  drop = FALSE]
     }
+    # Pre-tick all displayed rows.  Because the threshold filter above
+    # already drops anything at-or-below the threshold, "all displayed"
+    # equals "above threshold" — those are the rows that auto-download
+    # also fired on.  Opt-out: the user unticks rows they don't want in
+    # the CSV, matching the strict tab's UX.  Lowering the threshold
+    # post-render reveals new rows that stay un-ticked (correct: those
+    # weren't auto-downloaded either).
     .render_dt(tbl, checkbox = TRUE,
-               checkbox_input = "fb_table_rows_selected")
+               checkbox_input = "fb_table_rows_selected",
+               select_all = TRUE)
   }, server = FALSE)
 
   # Rows the user has ticked in the fallback table. Selection indexes
