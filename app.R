@@ -1144,8 +1144,32 @@ server <- function(input, output, session) {
         tags$strong("No manual downloads needed."),
         " Either everything was downloaded or no rows had OA links."))
     }
-    failed <- outcome[!isTRUE(outcome$ok) & !outcome$ok, , drop = FALSE]
-    succeeded <- outcome[isTRUE(outcome$ok) | outcome$ok, , drop = FALSE]
+    # Reconcile against what's now on disk.  After a manual save +
+    # Re-scan, a row whose DOI matches any PDF in the folder (whether by
+    # the auto-download's exact destination filename or by DOI substring
+    # match against any user-saved file) is treated as resolved and
+    # moved out of the "needs download" list.
+    on_disk <- list.files(folder, pattern = "\\.pdf$",
+                          full.names = TRUE, ignore.case = TRUE)
+    on_disk_names <- basename(on_disk)
+    resolved <- vapply(seq_len(nrow(outcome)), function(i) {
+      row <- outcome[i, , drop = FALSE]
+      dest <- row$dest %||% NA_character_
+      if (!is.na(dest) && nzchar(dest) && file.exists(dest)) return(TRUE)
+      doi <- row$doi %||% NA_character_
+      if (!is.na(doi) && nzchar(doi) && length(on_disk_names)) {
+        hit <- match_doi_from_filename(on_disk_names[1], doi)
+        # match_doi_from_filename takes one filename + many candidates;
+        # invert it: try each on-disk file against this single DOI.
+        any_hit <- any(vapply(on_disk_names, function(fn) {
+          nzchar(match_doi_from_filename(fn, doi))
+        }, logical(1)))
+        if (any_hit) return(TRUE)
+      }
+      isTRUE(row$ok)
+    }, logical(1))
+    failed <- outcome[!resolved, , drop = FALSE]
+    succeeded <- outcome[resolved, , drop = FALSE]
     if (nrow(failed) == 0) {
       return(tags$div(
         class = "alert alert-success",
@@ -1375,6 +1399,9 @@ server <- function(input, output, session) {
 
   output$strict_pdfs_manual_dl_panel <- renderUI({
     req(result())
+    # Re-render whenever the folder is re-scanned so a freshly-saved
+    # PDF disappears from the "needs manual download" list.
+    strict_pdfs_scan()
     folder <- file.path(.grant_folder(input$grant,
                                       current_row()$family_name,
                                       current_row()$pi_full_name),
@@ -1383,6 +1410,7 @@ server <- function(input, output, session) {
   })
   output$fallback_pdfs_manual_dl_panel <- renderUI({
     req(result())
+    fallback_pdfs_scan()
     folder <- file.path(.grant_folder(input$grant,
                                       current_row()$family_name,
                                       current_row()$pi_full_name),
