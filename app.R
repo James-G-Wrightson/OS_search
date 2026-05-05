@@ -111,6 +111,10 @@ ui <- page_sidebar(
       h5("ClinicalTrials.gov"), DTOutput("strict_ct")
     ),
     nav_panel(
+      "Strict PDFs",
+      uiOutput("strict_pdfs_tab_content")
+    ),
+    nav_panel(
       "Fallback match (PI / ORCID / keywords)",
       uiOutput("fallback_grant_banner"),
       p("Broader search. Useful when the PI didn't acknowledge the award ID, or when the output (e.g. a trial registration, a dataset) doesn't carry grant metadata. Human review required."),
@@ -150,8 +154,8 @@ ui <- page_sidebar(
       DTOutput("fb_table")
     ),
     nav_panel(
-      "PDF extraction",
-      uiOutput("pdf_tab_content")
+      "Fallback PDFs",
+      uiOutput("fallback_pdfs_tab_content")
     ),
     nav_panel(
       "About",
@@ -1079,6 +1083,55 @@ server <- function(input, output, session) {
     extra_rows(tibble::tibble())
     last_saved_path(NULL)
   }, ignoreInit = TRUE)
+
+  # ---- Strict PDFs / Fallback PDFs tabs ----
+  # Each tab batch-scans the per-grant subfolder of strict_papers/ or
+  # fallback_papers/ for registrations, data-availability statements, and
+  # (fallback only) whether the current grant's CIHR number appears in the
+  # PDF text.  The two tabs share UI shape via .pdf_tab_ui(); the per-kind
+  # observers and reactive scan tibbles are added in the next commit.
+  .pdf_tab_ui <- function(kind) {
+    if (!isTRUE(PDF_VENV_STATUS$ok)) {
+      return(tagList(
+        tags$div(
+          class = "alert alert-danger",
+          tags$h4(style = "margin-top:0", "PDF pipeline unavailable"),
+          tags$p(PDF_VENV_STATUS$message),
+          tags$p(tags$small(style = "color:#666",
+            "The rest of the app (grant search, matched-works CSV) still works normally."))
+        )
+      ))
+    }
+    if (search_trigger() < 1) {
+      return(tagList(
+        tags$div(
+          class = "alert alert-info",
+          tags$h4(style = "margin-top:0", "Run a grant search first"),
+          tags$p("Pick a grant in the sidebar and press ",
+                 tags$b("Search linked works"),
+                 ". The app will auto-download every accessible OA PDF for ",
+                 tags$strong(if (kind == "strict") "strict matches"
+                             else "fallback matches above the similarity threshold"),
+                 " into ",
+                 tags$code(if (kind == "strict") "strict_papers/" else "fallback_papers/"),
+                 ", and this tab will scan them.")
+        )
+      ))
+    }
+    # Post-search shell: the manual-download panel + per-section tables get
+    # wired in commit 6.  Leaving an explanatory placeholder here so the
+    # tab renders without errors and smoke tests can pick up the output id.
+    label <- if (kind == "strict") "Strict PDF scan" else "Fallback PDF scan"
+    tagList(
+      tags$h4(label),
+      tags$p("Scan results (registrations, data-availability statements",
+             if (kind == "fallback") ", current-grant matches" else "",
+             ") will appear here once the per-tab scan logic lands. ",
+             "Auto-download has already populated the folder for this grant.")
+    )
+  }
+  output$strict_pdfs_tab_content   <- renderUI({ .pdf_tab_ui("strict")   })
+  output$fallback_pdfs_tab_content <- renderUI({ .pdf_tab_ui("fallback") })
 
   # Gating: the PDF tab is only usable after the user has run a grant
   # search. search_trigger() increments once per confirmed search.
