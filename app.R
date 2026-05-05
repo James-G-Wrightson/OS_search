@@ -13,6 +13,7 @@ options(shiny.maxRequestSize = 100 * 1024 * 1024)
 source("R/data_loader.R")
 source("R/api_clients.R")
 source("R/pdf_convert.R")
+source("R/pdf_download.R")
 source("R/similarity.R")
 
 PG <- load_project_grants()
