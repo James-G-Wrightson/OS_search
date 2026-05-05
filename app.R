@@ -1028,21 +1028,8 @@ server <- function(input, output, session) {
                                       current_row()$pi_full_name),
                         if (kind == "strict") "strict_papers" else "fallback_papers")
     label <- if (kind == "strict") "Strict PDF scan" else "Fallback PDF scan"
-    extra_section <- if (kind == "fallback") {
-      tagList(
-        hr(),
-        tags$h5("Current grant in PDF"),
-        tags$p(tags$small(style = "color:#666",
-          "Per PDF: does the current grant's CIHR ID appear in the text? Rows where it does are pre-ticked. Adding ticks merges ",
-          tags$code("grant_id_in_pdf=TRUE"),
-          " into the source paper's row in the matched-works CSV via the linked DOI.")),
-        DTOutput("fallback_pdfs_grant_match_table"),
-        uiOutput("fallback_pdfs_grant_match_add_ui")
-      )
-    } else NULL
 
-    tagList(
-      tags$h4(label),
+    common_controls <- tagList(
       tags$p(tags$small(style = "color:#666",
         "Folder: ", tags$code(folder))),
       uiOutput(sprintf("%s_pdfs_manual_dl_panel", kind)),
@@ -1062,17 +1049,49 @@ server <- function(input, output, session) {
                            textOutput(sprintf("%s_pdfs_scan_status", kind),
                                       inline = TRUE)))
       ),
-      uiOutput(sprintf("%s_pdfs_scan_errors", kind)),
-      hr(),
-      tags$h5("Registrations (clinical-trial / systematic-review IDs)"),
-      DTOutput(sprintf("%s_pdfs_reg_table", kind)),
-      uiOutput(sprintf("%s_pdfs_reg_add_ui", kind)),
-      hr(),
-      tags$h5("Data availability (deposits, accessions, repositories)"),
-      DTOutput(sprintf("%s_pdfs_da_table", kind)),
-      uiOutput(sprintf("%s_pdfs_da_add_ui", kind)),
-      extra_section
+      uiOutput(sprintf("%s_pdfs_scan_errors", kind))
     )
+
+    if (kind == "fallback") {
+      # New flow: pick PDFs first (Current grant in PDF), then the
+      # registrations + data-availability tables only show findings from
+      # the ticked PDFs.
+      tagList(
+        tags$h4(label),
+        common_controls,
+        hr(),
+        tags$h5("Current grant in PDF"),
+        tags$p(tags$small(style = "color:#666",
+          "Per PDF: does the current grant's CIHR ID appear in the text? Rows where it does are pre-ticked. ",
+          "The registrations and data-availability tables below are filtered to the PDFs ticked here. ",
+          "Adding ticks also merges ",
+          tags$code("grant_id_in_pdf=TRUE"),
+          " into the source paper's row in the matched-works CSV via the linked DOI.")),
+        DTOutput("fallback_pdfs_grant_match_table"),
+        uiOutput("fallback_pdfs_grant_match_add_ui"),
+        hr(),
+        tags$h5("Registrations (clinical-trial / systematic-review IDs) — ticked PDFs only"),
+        DTOutput("fallback_pdfs_reg_table"),
+        uiOutput("fallback_pdfs_reg_add_ui"),
+        hr(),
+        tags$h5("Data availability (deposits, accessions, repositories) — ticked PDFs only"),
+        DTOutput("fallback_pdfs_da_table"),
+        uiOutput("fallback_pdfs_da_add_ui")
+      )
+    } else {
+      tagList(
+        tags$h4(label),
+        common_controls,
+        hr(),
+        tags$h5("Registrations (clinical-trial / systematic-review IDs)"),
+        DTOutput(sprintf("%s_pdfs_reg_table", kind)),
+        uiOutput(sprintf("%s_pdfs_reg_add_ui", kind)),
+        hr(),
+        tags$h5("Data availability (deposits, accessions, repositories)"),
+        DTOutput(sprintf("%s_pdfs_da_table", kind)),
+        uiOutput(sprintf("%s_pdfs_da_add_ui", kind))
+      )
+    }
   }
   output$strict_pdfs_tab_content   <- renderUI({ .pdf_tab_ui("strict")   })
   output$fallback_pdfs_tab_content <- renderUI({ .pdf_tab_ui("fallback") })
@@ -1301,21 +1320,42 @@ server <- function(input, output, session) {
     if (length(s$scans) == 0) return(tibble::tibble())
     .flatten_data_availability(s$scans, pdf_link_candidates()$doi)
   })
-  fallback_pdfs_reg <- reactive({
-    s <- fallback_pdfs_scan()
-    if (length(s$scans) == 0) return(tibble::tibble())
-    .flatten_registrations(s$scans, pdf_link_candidates()$doi)
-  })
-  fallback_pdfs_da <- reactive({
-    s <- fallback_pdfs_scan()
-    if (length(s$scans) == 0) return(tibble::tibble())
-    .flatten_data_availability(s$scans, pdf_link_candidates()$doi)
-  })
   fallback_pdfs_grant_match <- reactive({
     s <- fallback_pdfs_scan()
     if (length(s$scans) == 0) return(tibble::tibble())
     .summarise_grant_match(s$scans, pdf_link_candidates()$doi,
                            result()$award)
+  })
+  # The set of PDF filenames the user has ticked in the "Current grant
+  # in PDF" table.  Drives which PDFs the registrations + data-
+  # availability tables on the fallback tab show — empty selection
+  # means empty tables.
+  fallback_pdfs_selected_files <- reactive({
+    tbl <- fallback_pdfs_grant_match()
+    if (is.null(tbl) || nrow(tbl) == 0) return(character(0))
+    sel <- input$fallback_pdfs_grant_match_rows_selected
+    if (is.null(sel) || length(sel) == 0) return(character(0))
+    sel <- sel[sel >= 1 & sel <= nrow(tbl)]
+    if (length(sel) == 0) return(character(0))
+    unique(tbl$pdf_file[sel])
+  })
+  fallback_pdfs_reg <- reactive({
+    s <- fallback_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    keep <- fallback_pdfs_selected_files()
+    if (length(keep) == 0) return(tibble::tibble())
+    scans <- Filter(function(it) basename(it$file) %in% keep, s$scans)
+    if (length(scans) == 0) return(tibble::tibble())
+    .flatten_registrations(scans, pdf_link_candidates()$doi)
+  })
+  fallback_pdfs_da <- reactive({
+    s <- fallback_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    keep <- fallback_pdfs_selected_files()
+    if (length(keep) == 0) return(tibble::tibble())
+    scans <- Filter(function(it) basename(it$file) %in% keep, s$scans)
+    if (length(scans) == 0) return(tibble::tibble())
+    .flatten_data_availability(scans, pdf_link_candidates()$doi)
   })
 
   # ---- Per-tab UI outputs (status, manual-DL panel, errors) ------------
