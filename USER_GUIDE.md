@@ -1,6 +1,6 @@
 # OS_search — User Guide for Research Assistants
 
-A practical, no-jargon walkthrough for extracting open-science outputs of a CIHR Project Grant. Your supervisor will give you a list of grant numbers; this guide walks through one of them as an example. Plan around 20–40 minutes per grant, depending on how prolific the PI is.
+A practical, no-jargon walkthrough for extracting open-science outputs of a CIHR Project Grant. Your supervisor will give you a list of grant numbers; this guide walks through one of them as an example. Plan around 15–30 minutes per grant, depending on how prolific the PI is.
 
 ---
 
@@ -10,9 +10,10 @@ For each grant on your list:
 
 1. Open the app and search the grant number.
 2. Review the **Strict match** tab — untick anything that doesn't belong.
-3. Download the PDF for every paper or preprint there, upload them one by one to the app, and use it to capture registrations and data deposits.
-4. Move to the **Fallback match** tab and repeat the review + PDF process.
-5. Download the matched-works CSV.
+3. Review the **Fallback match** tab — tick the rows that *do* belong.
+4. The app has already auto-downloaded most PDFs in the background. Manually save any that failed into the folder shown.
+5. Use the **Strict PDFs** and **Fallback PDFs** tabs to add registrations and data deposits to the CSV.
+6. Download the matched-works CSV.
 
 ---
 
@@ -42,9 +43,12 @@ The grey info box below fills in with PI name, institution, fiscal year, funding
 
 ## 3. Run the search
 
-Click **Search linked works**. A spinner appears while the app queries six external sources at once (Crossref, OpenAlex, DataCite, ClinicalTrials.gov, OpenAIRE, Europe PMC). It usually takes 10–45 seconds.
+Click **Search linked works**. A spinner appears while the app does two things at once:
 
-When it finishes, the **Summary** tab opens automatically. Take a glance at the counts so you know roughly what you're about to wade through.
+1. Queries six external sources (Crossref, OpenAlex, DataCite, ClinicalTrials.gov, OpenAIRE, Europe PMC).
+2. Auto-downloads the open-access PDF for every strict match plus every fallback match above the similarity threshold, into per-grant folders on disk.
+
+The whole thing usually takes 30–90 seconds. When it finishes, the **Summary** tab opens automatically. Take a glance at the counts so you know roughly what you're about to wade through.
 
 ---
 
@@ -60,40 +64,7 @@ The tab shows up to five separate tables:
 
 **Every Strict row is pre-ticked by default.** That means it goes into the final CSV unless you actively untick it. Read the title and PI for each row; untick anything that's obviously a duplicate or wrong.
 
-### 4a. Download each paper's PDF
-
-For each row in the OpenAlex / Europe PMC / Crossref / DataCite tables that is a paper or preprint:
-
-1. Look in the **OA PDF** column.
-   - If you see a `PDF ⬇` link, click it. A popup window opens with a free open-access copy. Save it to a folder on your computer.
-   - If you see `—`, no free copy is indexed.
-
-2. When there's no OA PDF, use one of these to track down a copy:
-   - **UBC Library** with your student credentials — search the title at <https://library.ubc.ca>; the most reliable route when the journal is in UBC's subscriptions.
-   - **Google Scholar** — paste the title; copies often show up under the "All N versions" link.
-   - The **verify ↗** link in the row opens the publisher's landing page if the other two fail.
-
-Save every PDF you find. You'll upload them to the app next.
-
-### 4b. Upload each PDF, one at a time
-
-For every PDF you saved:
-
-1. Click the **PDF extraction** tab.
-2. Click **Browse…** and pick one PDF file.
-3. The app auto-fills the **Linked source paper** dropdown by matching the filename to a DOI from the search results. Confirm the right source paper is selected, or pick a different one. (If the PDF doesn't correspond to any row, leave it as `(no source paper — keep PDF row standalone)`.)
-4. Click **Scan paper**. The scan takes 3–15 seconds and runs entirely on this machine — nothing is uploaded anywhere.
-5. Three result panels appear below:
-
-   - **CIHR funding** — confirms the paper declares CIHR as a funder of this study. Useful as evidence; usually leave the rows ticked.
-   - **Registration** — clinical-trial or systematic-review IDs (NCT, ISRCTN, PROSPERO, OSF, etc.). Click `verify on …` to confirm the ID really belongs to this paper, then leave it ticked.
-   - **Data availability** — public repository deposits (GEO, Zenodo, Dryad, GitHub, OSF, …). Same drill: click verify, sanity-check, leave ticked.
-
-6. Below each panel is an **Add ticked … rows to matched-works CSV** button. Click each one that found something. You'll see a green notification confirming how many rows were added.
-
-7. **Important:** before uploading the next PDF, make sure you've added every ticked row from this scan. Picking a new PDF clears the previous results — anything you didn't add is lost.
-
-8. Repeat for the next PDF: Browse, confirm the source-paper link, Scan, Add.
+There's no PDF work to do on this tab — the app has already downloaded what it could. You'll handle anything that didn't auto-download on the **Strict PDFs** tab (section 6).
 
 ---
 
@@ -103,37 +74,107 @@ Click **Fallback match (PI / ORCID / keywords)**. These rows aren't tied to the 
 
 Layout:
 
-- **Source** radio button — work through one source at a time, starting with OpenAlex (the highest-quality coverage).
+- **Source** filter — tick / untick sources to narrow the table.
 - **Match type** — leave both ticked. If the table is overwhelming, uncheck `PI (any)` first to keep only the funder-filtered rows.
 - **Similarity** column — a coloured score from comparing the grant's keywords to the paper's title and abstract:
   - Green `≥0.6 high` — most likely the right grant.
   - Amber `0.20–0.60 plausible` — read carefully before deciding.
   - Grey `<0.20 off-topic` — usually wrong topic; safe to skip.
 
-**Crucial difference from Strict:** Fallback rows are NOT pre-ticked. **You must tick each row you want to include** in the CSV. Unticked rows are ignored by the exporter.
+**Important defaults:** rows scoring above the similarity threshold are pre-ticked for you, and those are the ones the app has already auto-downloaded as PDFs. Lower-scoring rows are unticked — tick any you decide should be in the CSV after reviewing.
 
 For every plausible-or-better row:
 
 1. Click the **verify ↗** link. Does the title / abstract match the grant's research area? Is the publication date after the grant started?
-2. If yes, tick the row.
-3. Download the PDF (OA PDF column if available, otherwise UBC Library / Google Scholar as before).
-4. Upload it to the **PDF extraction** tab the same way as in section 4b — scan, then add the registration / data-deposit / CIHR-funding rows.
-
-When you finish one source, click the next radio button (Europe PMC → Crossref → DataCite → OpenAIRE → ClinicalTrials.gov) and repeat.
+2. If yes, leave it ticked (or tick it, for low-similarity rows).
 
 ### Quick rejection checklist
 
-Don't tick a fallback row when:
+Untick a fallback row when:
 
 - The PI name matches but the topic is clearly unrelated (PI homonyms — different person with the same name).
 - The paper was published before the grant started.
-- The PDF's funding statement names a completely different grant and there's no plausible link to this one.
+- The funding statement names a completely different grant and there's no plausible link to this one.
 
 ---
 
-## 6. Download the CSV
+## 6. Strict PDFs tab — fill the gaps and harvest signals
 
-When both tabs are reviewed and all the PDFs you could find are uploaded:
+Click **Strict PDFs**. This tab is the workshop: it shows you which PDFs need a manual save, then surfaces every registration ID and data deposit found across the strict folder.
+
+### 6a. Manual download box
+
+At the top, an orange `XX PDFs need manual download` panel lists every paper the auto-downloader couldn't fetch (paywalls, broken OA links, etc.). For each entry:
+
+1. Click `open PDF link` (or use the `verify ↗` route if there isn't one) to find the paper.
+2. If the OA route didn't work, fall back to:
+   - **UBC Library** with your student credentials — search the title at <https://library.ubc.ca>; the most reliable route when the journal is in UBC's subscriptions.
+   - **Google Scholar** — paste the title; copies often show up under the "All N versions" link.
+3. Save the PDF into the folder shown at the top of the tab (something like `downloads/155957_1_smith/strict_papers/`). The filename can be anything — the app matches by DOI in the filename if present, but you don't need to rename it as long as the DOI shows up somewhere in the name.
+4. Once you've saved one or more PDFs, click **Re-scan folder**. Saved files drop off the orange list and the count of "already downloaded" goes up.
+
+Repeat until the orange box is gone or you've exhausted the routes for the remaining ones.
+
+### 6b. Registrations + data availability tables
+
+Below the manual-download panel are two tables:
+
+- **Registrations** — every clinical-trial / systematic-review ID found across the strict PDFs (NCT, ISRCTN, PROSPERO, OSF, …). Duplicates are collapsed automatically — you only see one row per registration.
+- **Data availability** — every public-repository deposit (GEO, SRA, Zenodo, Dryad, GitHub, …). Same dedup.
+
+Every row is pre-ticked. For each one:
+
+1. Read the surrounding sentence column — does the registration / deposit really belong to this grant's research?
+2. Click the row's verify link to confirm the ID resolves.
+3. Untick anything that looks wrong (e.g. a sentence that names a different study).
+
+Then click:
+
+- **Add ticked registrations to CSV**
+- **Add ticked data-availability rows to CSV**
+
+A green notification confirms how many rows were added.
+
+---
+
+## 7. Fallback PDFs tab — pick which PDFs count
+
+Click **Fallback PDFs**. This tab works slightly differently from Strict PDFs because fallback PDFs aren't guaranteed to belong to this grant.
+
+### 7a. Manual download box
+
+Same drill as section 6a, but the folder is `…/fallback_papers/`. Save any failed downloads, then **Re-scan folder**.
+
+### 7b. Current grant in PDF — the gate
+
+The first results table is **Current grant in PDF**. One row per scanned fallback PDF. The `grant_id_in_pdf` column tells you whether the current grant's CIHR ID appears anywhere in the PDF text. Rows where it does are pre-ticked.
+
+**This table acts as a filter for everything below it.** The Registrations and Data-availability tables show findings *only* from the PDFs you tick here.
+
+For each row:
+
+1. If the grant ID was found in the PDF (pre-ticked), it's almost certainly a real grant output — leave it ticked.
+2. If the row is unticked but the paper is clearly relevant from the title / abstract you reviewed in section 5, tick it manually.
+3. Untick anything that turned out not to belong to this grant after you read its PDF.
+
+Click **Add ticked grant-match rows to CSV** to write the per-PDF "this grant ID was found in this paper" evidence into the CSV.
+
+### 7c. Registrations + data availability — filtered to ticked PDFs
+
+The two tables below now show registrations and data deposits only from the PDFs you ticked above. Anything already shown on the Strict PDFs tab is filtered out, so you only see *new* fallback findings.
+
+If the tables are empty, you haven't ticked any PDFs in 7b yet — go back and tick the relevant ones.
+
+For each row, check the sentence and verify, untick wrong matches, then:
+
+- **Add ticked registrations to CSV**
+- **Add ticked data-availability rows to CSV**
+
+---
+
+## 8. Download the CSV
+
+When both tabs are reviewed and all the registrations / data deposits you want are added:
 
 1. Go to the **Summary** tab.
 2. Click **Download matched works (CSV)**.
@@ -145,25 +186,26 @@ When both tabs are reviewed and all the PDFs you could find are uploaded:
 
    relative to the project folder. Your supervisor will tell you where to put it (shared drive, Dropbox, etc.).
 
-The CSV contains every ticked Strict row, every ticked Fallback row, and every PDF-derived registration / data-deposit / CIHR-funding row you added.
+The CSV contains every ticked Strict row, every ticked Fallback row, and every PDF-extracted registration / data-deposit / grant-match row you added.
 
 ---
 
-## 7. Move to the next grant
+## 9. Move to the next grant
 
-Type the next grant number into **Find grant by number (across all FYs)**. If a folder already exists for that grant the app asks you to confirm — click **Continue** to redo it.
+Type the next grant number into **Find grant by number (across all FYs)** and click **Search linked works**.
 
-Switching grants resets all the tabs, so make sure you've downloaded the CSV for the current grant before you switch.
+The previous grant's downloaded PDFs stay on disk under their own `downloads/{grant_id}_{PI_surname}/` folder — you can revisit them later if needed. Switching grants resets all the tabs in the browser, so make sure you've downloaded the CSV for the current grant before you switch.
 
 ---
 
 ## Tips and traps
 
-- **One PDF at a time.** Picking a new PDF clears the previous scan results. Always click the relevant `Add ticked … rows` buttons before uploading the next file.
-- **Save as you go.** Clicking *Download CSV* any time is fine — the file gets overwritten with the latest state. If you need to stop mid-grant, save the CSV; you'll need to re-search and re-tick when you come back, because the app doesn't remember tab state between sessions.
-- **A scan with very low text count.** If the status line says something like "Scanned 1,234 characters", the PDF is probably an image-only scan and the app can't read it. Note the paper for your supervisor and move on.
+- **Re-scan after every manual save.** The orange "needs manual download" panel and the registrations / data-availability tables only refresh when you click **Re-scan folder**.
+- **Filename doesn't matter much.** The app matches PDFs to papers by looking for the DOI inside the filename. The auto-downloader names them DOI-style; if you save manually, leaving the DOI somewhere in the filename helps the app link the PDF back to the right paper row.
+- **Image-only PDFs.** A few old PDFs are scanned images with no text layer, and the registration / data-availability tables can't see anything in them. If a paper looks important, note it for your supervisor and move on.
 - **Transient failures.** If the search or a PDF scan times out or returns a 502, try again once. If it fails repeatedly, flag it for your supervisor and continue with the rest of the grant.
 - **A grant with zero results.** Brand-new grants (funded 2021 or later) may legitimately have no published outputs yet. If both tabs are empty after a search, note "no outputs found yet" on your tracking sheet and move on.
+- **Strict findings hide from Fallback.** If a registration ID or data accession is already shown on the Strict PDFs tab, it won't appear again on the Fallback PDFs tab — that's intentional, to stop duplicates from creeping into the CSV.
 
 ---
 

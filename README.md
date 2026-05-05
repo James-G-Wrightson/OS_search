@@ -71,17 +71,18 @@ Rscript -e 'shiny::runApp("app.R", launch.browser = TRUE)'
 
 ### [USER_GUIDE.md](USER_GUIDE.md) — for the people doing the data extraction
 
-A practical, no-jargon walkthrough aimed at research assistants and undergrads working through a list of grant numbers. Plan around 20–40 minutes per grant. Covers, in order:
+A practical, no-jargon walkthrough aimed at research assistants and undergrads working through a list of grant numbers. Plan around 15–30 minutes per grant. Covers, in order:
 
 1. Launching the app.
 2. Finding the grant by number and confirming the PI / institution / abstract match.
-3. Running the registry search and reading the **Summary** counts.
+3. Running the registry search — the app queries six sources and auto-downloads accessible OA PDFs into per-grant `strict_papers/` and `fallback_papers/` folders in the same step.
 4. Reviewing the **Strict match** tab — rows are pre-ticked by default; untick anything that doesn't belong.
-5. Downloading each paper's PDF (open-access link if available; otherwise UBC Library credentials or Google Scholar) and uploading them one by one to the **PDF extraction** tab to capture CIHR funding evidence, registration IDs, and data deposits.
-6. Reviewing the **Fallback match** tab — rows are *not* pre-ticked here (opposite default to Strict); tick to include after verifying the work belongs to this grant.
-7. Downloading the matched-works CSV and moving to the next grant.
+5. Reviewing the **Fallback match** tab — rows above the similarity threshold are pre-ticked (and have already been auto-downloaded); review and adjust ticks.
+6. **Strict PDFs** tab — manually save any PDFs the auto-downloader couldn't fetch into the folder shown, re-scan, then add ticked registrations and data-availability rows to the CSV.
+7. **Fallback PDFs** tab — same pattern, but gated on a per-PDF "Current grant in PDF" picker so only the PDFs the user confirms feed into the registrations / data-availability lists. Strict findings are subtracted automatically so fallback only shows new entries.
+8. Downloading the matched-works CSV and moving to the next grant.
 
-Includes a quick rejection checklist for fallback rows (PI homonyms, pre-grant publications, etc.), a tips-and-traps section (one PDF at a time; new uploads clear previous scans), and a glossary.
+Includes a quick rejection checklist for fallback rows (PI homonyms, pre-grant publications, etc.), a tips-and-traps section (re-scan after every manual save; image-only PDFs; transient failures), and a glossary.
 
 ### [ABOUT.md](ABOUT.md) — for developers and reviewers
 
@@ -95,12 +96,13 @@ R/data_loader.R      Parses CIHR Project Grant workbooks, caches to RDS
 R/api_clients.R      Crossref / OpenAlex / DataCite / CT.gov / OpenAIRE /
                      Europe PMC clients + outcome summariser
 R/pdf_convert.R      Wraps the py/ helpers via system2(); JSON → tibble
+R/pdf_download.R     Auto-download client (HTTP + magic-bytes validation)
 R/similarity.R       BM25 similarity score for fallback rows
 py/                  Local PDF pipeline (PyMuPDF + rule-based detectors)
 python/              Pinned Python requirements
 environment.yml      Conda environment for reproducible installs
 cache/               project_grants.rds (parsed workbooks; gitignored)
-downloads/           Per-grant CSV exports (gitignored)
+downloads/           Per-grant CSV exports + auto-downloaded PDFs (gitignored)
 ```
 
 ## Acknowledgments
