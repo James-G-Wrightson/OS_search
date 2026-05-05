@@ -687,15 +687,24 @@ server <- function(input, output, session) {
         targets = 0, width = "30px"
       ))
       input_name <- checkbox_input %||% "dt_rows_selected"
-      # When `select_all` is TRUE, programmatically tick every row right
-      # after the listener is wired.  The select() call fires the
-      # listener, which pushes the full index set up to Shiny via
-      # setInputValue — so the CSV builder sees "all ticked" without
-      # the user having to click anything.  Used for the strict tab
-      # where the default is opt-out; fallback stays opt-in
-      # (select_all=FALSE).  Row-highlight tint is suppressed by CSS
-      # injected from the UI head.
-      js_select_all <- if (select_all) "\ntable.rows().select();" else ""
+      # `select_all` controls which rows are programmatically ticked once
+      # the listener is wired.  Three forms:
+      #   TRUE  -> tick every row (table.rows().select()).
+      #   FALSE -> tick nothing (default; opt-in).
+      #   numeric vector -> tick those 1-based row indices only (used by
+      #     the fallback PDF grant-match table to pre-tick just the rows
+      #     where the current grant ID was found in the PDF text).
+      # The select() call fires the listener, which pushes the resulting
+      # index set up to Shiny via setInputValue — so the CSV builder sees
+      # the right "ticked" set without the user having to click anything.
+      js_select_all <- if (isTRUE(select_all)) {
+        "\ntable.rows().select();"
+      } else if (is.numeric(select_all) && length(select_all) > 0) {
+        sprintf("\ntable.rows([%s]).select();",
+                paste(as.integer(select_all) - 1L, collapse = ","))
+      } else {
+        ""
+      }
       dt_cb <- DT::JS(sprintf(
         "table.on('select deselect', function() {\n  var ids = table.rows({selected:true}).indexes().toArray().map(function(i){ return i + 1; });\n  Shiny.setInputValue('%s', ids, {priority:'event'});\n});%s",
         input_name, js_select_all
@@ -749,7 +758,7 @@ server <- function(input, output, session) {
   PDF_SIGNAL_COLS <- c(
     "registration_id", "registry",
     "data_repository", "data_accession",
-    "cihr_grant_ids",
+    "cihr_grant_ids", "grant_id_in_pdf",
     "section", "sentence", "anchor", "confidence",
     "pdf_file"
   )
@@ -1118,20 +1127,623 @@ server <- function(input, output, session) {
         )
       ))
     }
-    # Post-search shell: the manual-download panel + per-section tables get
-    # wired in commit 6.  Leaving an explanatory placeholder here so the
-    # tab renders without errors and smoke tests can pick up the output id.
+    # Post-search content: manual-download panel + per-section tables.
+    folder <- file.path(.grant_folder(input$grant,
+                                      current_row()$family_name,
+                                      current_row()$pi_full_name),
+                        if (kind == "strict") "strict_papers" else "fallback_papers")
     label <- if (kind == "strict") "Strict PDF scan" else "Fallback PDF scan"
+    extra_section <- if (kind == "fallback") {
+      tagList(
+        hr(),
+        tags$h5("Current grant in PDF"),
+        tags$p(tags$small(style = "color:#666",
+          "Per PDF: does the current grant's CIHR ID appear in the text? Rows where it does are pre-ticked. Adding ticks merges ",
+          tags$code("grant_id_in_pdf=TRUE"),
+          " into the source paper's row in the matched-works CSV via the linked DOI.")),
+        DTOutput("fallback_pdfs_grant_match_table"),
+        uiOutput("fallback_pdfs_grant_match_add_ui")
+      )
+    } else NULL
+
     tagList(
       tags$h4(label),
-      tags$p("Scan results (registrations, data-availability statements",
-             if (kind == "fallback") ", current-grant matches" else "",
-             ") will appear here once the per-tab scan logic lands. ",
-             "Auto-download has already populated the folder for this grant.")
+      tags$p(tags$small(style = "color:#666",
+        "Folder: ", tags$code(folder))),
+      uiOutput(sprintf("%s_pdfs_manual_dl_panel", kind)),
+      hr(),
+      fluidRow(
+        column(4, actionButton(
+          sprintf("%s_pdfs_rescan", kind),
+          "Re-scan folder",
+          icon = icon("rotate"),
+          class = "btn-outline-primary")),
+        column(4, actionButton(
+          sprintf("%s_pdfs_open_folder", kind),
+          "Open folder",
+          icon = icon("folder-open"),
+          class = "btn-outline-secondary")),
+        column(4, tags$div(style = "padding-top:0.4em;color:#555",
+                           textOutput(sprintf("%s_pdfs_scan_status", kind),
+                                      inline = TRUE)))
+      ),
+      uiOutput(sprintf("%s_pdfs_scan_errors", kind)),
+      hr(),
+      tags$h5("Registrations (clinical-trial / systematic-review IDs)"),
+      DTOutput(sprintf("%s_pdfs_reg_table", kind)),
+      uiOutput(sprintf("%s_pdfs_reg_add_ui", kind)),
+      hr(),
+      tags$h5("Data availability (deposits, accessions, repositories)"),
+      DTOutput(sprintf("%s_pdfs_da_table", kind)),
+      uiOutput(sprintf("%s_pdfs_da_add_ui", kind)),
+      extra_section
     )
   }
   output$strict_pdfs_tab_content   <- renderUI({ .pdf_tab_ui("strict")   })
   output$fallback_pdfs_tab_content <- renderUI({ .pdf_tab_ui("fallback") })
+
+  # ---- Helpers shared by both new PDF tabs ----
+
+  # Cross-platform "open this folder in the OS file manager" — Finder on
+  # macOS, Explorer on Windows, xdg-open on Linux.  Errors are silent
+  # (showNotification on failure rather than crashing the reactive).
+  .open_folder_in_os <- function(folder) {
+    dir.create(folder, recursive = TRUE, showWarnings = FALSE)
+    sysname <- Sys.info()[["sysname"]]
+    cmd_ok <- tryCatch({
+      if (sysname == "Darwin") {
+        system2("open", shQuote(folder))
+      } else if (.Platform$OS.type == "windows") {
+        system2("explorer", shQuote(folder))
+      } else {
+        system2("xdg-open", shQuote(folder))
+      }
+      TRUE
+    }, error = function(e) FALSE)
+    if (!cmd_ok) {
+      showNotification(sprintf("Couldn't open folder: %s", folder),
+                       type = "warning", duration = 6)
+    }
+  }
+
+  # Normalise CIHR grant IDs for comparison: strip a leading "PJT-"/"MOP-"
+  # /etc. prefix (OpenAlex stores both forms; the PDF detector returns the
+  # bare digits) and trim whitespace, lower-cased.  Used to check whether
+  # a CIHR grant ID extracted from a fallback PDF matches the current
+  # grant's award number.
+  .normalize_cihr_id <- function(x) {
+    x <- as.character(x)
+    x <- toupper(trimws(x))
+    x <- sub("^(PJT|MOP|MSH|FRN|HSI|IGH|INMD|IPPH|OOP|CPP|HOA|FDN|SOP|PJ)[\\-\\s]?",
+            "", x, perl = TRUE)
+    x <- gsub("[^0-9A-Z]", "", x)
+    x
+  }
+
+  # Render the "manual download needed" panel: rows where auto-download
+  # didn't succeed.  Used in both PDF tabs.  `outcome` is the
+  # strict_dl_outcome / fallback_dl_outcome tibble stashed on result().
+  .manual_dl_panel <- function(outcome, folder) {
+    if (is.null(outcome) || nrow(outcome) == 0) {
+      return(tags$div(
+        class = "alert alert-success",
+        tags$strong("No manual downloads needed."),
+        " Either everything was downloaded or no rows had OA links."))
+    }
+    failed <- outcome[!isTRUE(outcome$ok) & !outcome$ok, , drop = FALSE]
+    succeeded <- outcome[isTRUE(outcome$ok) | outcome$ok, , drop = FALSE]
+    if (nrow(failed) == 0) {
+      return(tags$div(
+        class = "alert alert-success",
+        sprintf("All %d PDFs downloaded automatically.", nrow(succeeded))))
+    }
+    items <- lapply(seq_len(nrow(failed)), function(i) {
+      row <- failed[i, , drop = FALSE]
+      title <- if (!is.na(row$title) && nzchar(row$title)) row$title else "(untitled)"
+      url   <- row$url %||% NA_character_
+      tags$li(
+        tags$strong(title),
+        if (!is.na(row$doi) && nzchar(row$doi))
+          tags$span(style = "margin-left:0.4em;color:#888;font-size:0.85em",
+                    tags$code(row$doi)) else NULL,
+        if (!is.na(url) && nzchar(url))
+          tags$span(style = "margin-left:0.4em",
+                    tags$a(href = url, target = "_blank", rel = "noopener",
+                           "open PDF link")) else NULL,
+        tags$span(class = "badge bg-warning text-dark",
+                  style = "margin-left:0.5em",
+                  row$reason %||% "fetch failed")
+      )
+    })
+    tags$div(
+      class = "alert alert-warning",
+      tags$h5(style = "margin-top:0",
+              sprintf("%d PDF%s need manual download",
+                      nrow(failed), if (nrow(failed) == 1) "" else "s")),
+      tags$p(sprintf("%d already downloaded automatically.", nrow(succeeded))),
+      tags$ul(items),
+      tags$p(tags$small(style = "color:#555",
+        "Open each link, save the PDF into the folder shown above (filename can be anything — the matcher uses the DOI in the filename if present), then press ",
+        tags$strong("Re-scan folder"), "."))
+    )
+  }
+
+  # ---- Per-tab scan reactive: enumerates *.pdf in the kind's folder,
+  # invokes scan_paper() per file with per-file tryCatch.  Re-fires on
+  # `result()` (i.e. after a fresh search auto-download) and on the
+  # "Re-scan folder" button.  Returns a list with `scans` (one entry per
+  # OK file: list(file, scan)) and `errors` (one entry per failed file:
+  # list(file, message)).  An empty folder returns empty lists, never
+  # NULL — downstream renderers branch on length(), not is.null().
+  .scan_pdfs_in_folder <- function(folder) {
+    files <- list.files(folder, pattern = "\\.pdf$",
+                        full.names = TRUE, ignore.case = TRUE)
+    if (!length(files)) return(list(scans = list(), errors = list(),
+                                    total = 0L))
+    show_modal_spinner(spin = "atom",
+      text = sprintf("Scanning %d PDF%s for registrations + data deposits + funding...",
+                     length(files), if (length(files) == 1) "" else "s"))
+    on.exit(try(remove_modal_spinner(), silent = TRUE), add = TRUE)
+    scans <- list(); errors <- list()
+    for (p in files) {
+      r <- tryCatch(scan_paper(p), error = function(e) e)
+      if (inherits(r, "error")) {
+        errors[[length(errors) + 1L]] <- list(file = basename(p),
+                                              message = conditionMessage(r))
+      } else {
+        scans[[length(scans) + 1L]] <- list(file = p, scan = r)
+      }
+    }
+    list(scans = scans, errors = errors, total = length(files))
+  }
+
+  strict_pdfs_scan <- eventReactive(
+    list(input$strict_pdfs_rescan, result()),
+    {
+      req(result())
+      folder <- file.path(.grant_folder(input$grant,
+                                        current_row()$family_name,
+                                        current_row()$pi_full_name),
+                          "strict_papers")
+      .scan_pdfs_in_folder(folder)
+    },
+    ignoreNULL = FALSE
+  )
+
+  fallback_pdfs_scan <- eventReactive(
+    list(input$fallback_pdfs_rescan, result()),
+    {
+      req(result())
+      folder <- file.path(.grant_folder(input$grant,
+                                        current_row()$family_name,
+                                        current_row()$pi_full_name),
+                          "fallback_papers")
+      .scan_pdfs_in_folder(folder)
+    },
+    ignoreNULL = FALSE
+  )
+
+  # Flatten one tab's scan list into the per-section tibbles consumed by
+  # the DT renderers and the add-to-CSV observers.  `linked_doi` is
+  # resolved from the filename via match_doi_from_filename() against the
+  # combined strict+fallback candidate set.
+  .flatten_registrations <- function(scan_list, candidate_dois) {
+    out <- lapply(scan_list, function(item) {
+      m <- item$scan$registration$matches
+      if (is.null(m) || nrow(m) == 0) return(NULL)
+      tibble::tibble(
+        pdf_file   = basename(item$file),
+        linked_doi = match_doi_from_filename(basename(item$file), candidate_dois),
+        registry   = m$registry,
+        id         = m$id,
+        section    = m$section %||% NA_character_,
+        sentence   = m$sentence %||% NA_character_,
+        anchor     = m$anchor %||% NA_character_,
+        confidence = m$confidence %||% NA_character_
+      )
+    })
+    bind_rows(out)
+  }
+
+  .flatten_data_availability <- function(scan_list, candidate_dois) {
+    out <- lapply(scan_list, function(item) {
+      m <- item$scan$data_availability$matches
+      if (is.null(m) || nrow(m) == 0) return(NULL)
+      tibble::tibble(
+        pdf_file   = basename(item$file),
+        linked_doi = match_doi_from_filename(basename(item$file), candidate_dois),
+        repository = m$repository,
+        accession  = m$accession,
+        category   = m$category %||% NA_character_,
+        section    = m$section %||% NA_character_,
+        sentence   = m$sentence %||% NA_character_,
+        confidence = m$confidence %||% NA_character_
+      )
+    })
+    bind_rows(out)
+  }
+
+  # Per-PDF grant-match summary (fallback tab only).  One row per scanned
+  # PDF, regardless of how many CIHR funding statements it contains.
+  .summarise_grant_match <- function(scan_list, candidate_dois, current_award) {
+    target <- .normalize_cihr_id(current_award)
+    out <- lapply(scan_list, function(item) {
+      cf <- item$scan$cihr_funding
+      gids <- character()
+      if (!is.null(cf$matches) && nrow(cf$matches)) {
+        gids_col <- cf$matches$grant_ids
+        if (is.list(gids_col)) {
+          gids <- unique(unlist(gids_col, use.names = FALSE))
+        } else if (is.character(gids_col)) {
+          gids <- unique(gids_col)
+        }
+      }
+      gids <- gids[!is.na(gids) & nzchar(gids)]
+      norm <- .normalize_cihr_id(gids)
+      hit  <- length(target) == 1L && nzchar(target) && target %in% norm
+      tibble::tibble(
+        pdf_file                 = basename(item$file),
+        linked_doi               = match_doi_from_filename(basename(item$file),
+                                                           candidate_dois),
+        grant_id_in_pdf          = isTRUE(hit),
+        extracted_cihr_grant_ids = paste(gids, collapse = "; "),
+        funded_by_cihr           = isTRUE(cf$funded_by_cihr),
+        funding_confidence       = cf$confidence %||% NA_character_
+      )
+    })
+    bind_rows(out)
+  }
+
+  # Reactive flatteners (one per (kind, section)).  Compute against the
+  # candidate-DOI set so linked_doi resolves correctly.
+  strict_pdfs_reg <- reactive({
+    s <- strict_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    .flatten_registrations(s$scans, pdf_link_candidates()$doi)
+  })
+  strict_pdfs_da <- reactive({
+    s <- strict_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    .flatten_data_availability(s$scans, pdf_link_candidates()$doi)
+  })
+  fallback_pdfs_reg <- reactive({
+    s <- fallback_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    .flatten_registrations(s$scans, pdf_link_candidates()$doi)
+  })
+  fallback_pdfs_da <- reactive({
+    s <- fallback_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    .flatten_data_availability(s$scans, pdf_link_candidates()$doi)
+  })
+  fallback_pdfs_grant_match <- reactive({
+    s <- fallback_pdfs_scan()
+    if (length(s$scans) == 0) return(tibble::tibble())
+    .summarise_grant_match(s$scans, pdf_link_candidates()$doi,
+                           result()$award)
+  })
+
+  # ---- Per-tab UI outputs (status, manual-DL panel, errors) ------------
+
+  output$strict_pdfs_scan_status <- renderText({
+    s <- strict_pdfs_scan()
+    if (s$total == 0L) return("No PDFs in folder yet.")
+    sprintf("Scanned %d PDF%s (%d errored).",
+            s$total, if (s$total == 1) "" else "s", length(s$errors))
+  })
+  output$fallback_pdfs_scan_status <- renderText({
+    s <- fallback_pdfs_scan()
+    if (s$total == 0L) return("No PDFs in folder yet.")
+    sprintf("Scanned %d PDF%s (%d errored).",
+            s$total, if (s$total == 1) "" else "s", length(s$errors))
+  })
+
+  output$strict_pdfs_manual_dl_panel <- renderUI({
+    req(result())
+    folder <- file.path(.grant_folder(input$grant,
+                                      current_row()$family_name,
+                                      current_row()$pi_full_name),
+                        "strict_papers")
+    .manual_dl_panel(result()$strict_dl_outcome, folder)
+  })
+  output$fallback_pdfs_manual_dl_panel <- renderUI({
+    req(result())
+    folder <- file.path(.grant_folder(input$grant,
+                                      current_row()$family_name,
+                                      current_row()$pi_full_name),
+                        "fallback_papers")
+    .manual_dl_panel(result()$fallback_dl_outcome, folder)
+  })
+
+  .render_scan_errors <- function(errs) {
+    if (length(errs) == 0) return(NULL)
+    items <- lapply(errs, function(e) tags$li(tags$code(e$file), ": ", e$message))
+    tags$div(class = "alert alert-warning",
+             tags$strong(sprintf("%d PDF%s failed to scan",
+                                 length(errs),
+                                 if (length(errs) == 1) "" else "s")),
+             tags$ul(items))
+  }
+  output$strict_pdfs_scan_errors <- renderUI({
+    .render_scan_errors(strict_pdfs_scan()$errors)
+  })
+  output$fallback_pdfs_scan_errors <- renderUI({
+    .render_scan_errors(fallback_pdfs_scan()$errors)
+  })
+
+  # ---- DT renderers for the four similar tables (reg + DA, x2 tabs) ----
+
+  .render_pdf_findings_dt <- function(tbl, checkbox_input) {
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(datatable(data.frame(info = "(no findings)"),
+                       rownames = FALSE, selection = "none",
+                       options = list(dom = "t")))
+    }
+    # Truncate sentence to a manageable length for the table view
+    if ("sentence" %in% names(tbl)) {
+      tbl$sentence <- ifelse(
+        is.na(tbl$sentence) | !nzchar(tbl$sentence), "",
+        ifelse(nchar(tbl$sentence) > 200,
+               paste0(substr(tbl$sentence, 1, 200), "…"),
+               tbl$sentence))
+    }
+    # Reuse the strict-tab pattern: pre-tick all rows, opt-out via untick.
+    tbl <- cbind(" " = rep("", nrow(tbl)), tbl)
+    dt_opts <- list(
+      pageLength = 10, scrollX = TRUE,
+      select = list(style = "multi", selector = "td:first-child"),
+      columnDefs = list(list(orderable = FALSE,
+                             className = "select-checkbox",
+                             targets = 0, width = "30px"))
+    )
+    cb <- DT::JS(sprintf(
+      "table.on('select deselect', function() {\n  var ids = table.rows({selected:true}).indexes().toArray().map(function(i){ return i + 1; });\n  Shiny.setInputValue('%s', ids, {priority:'event'});\n});\ntable.rows().select();",
+      checkbox_input
+    ))
+    datatable(tbl, escape = FALSE, rownames = FALSE,
+              selection = "none", extensions = "Select",
+              options = dt_opts, callback = cb)
+  }
+
+  output$strict_pdfs_reg_table <- renderDT({
+    .render_pdf_findings_dt(strict_pdfs_reg(),
+                            "strict_pdfs_reg_rows_selected")
+  }, server = FALSE)
+  output$strict_pdfs_da_table <- renderDT({
+    .render_pdf_findings_dt(strict_pdfs_da(),
+                            "strict_pdfs_da_rows_selected")
+  }, server = FALSE)
+  output$fallback_pdfs_reg_table <- renderDT({
+    .render_pdf_findings_dt(fallback_pdfs_reg(),
+                            "fallback_pdfs_reg_rows_selected")
+  }, server = FALSE)
+  output$fallback_pdfs_da_table <- renderDT({
+    .render_pdf_findings_dt(fallback_pdfs_da(),
+                            "fallback_pdfs_da_rows_selected")
+  }, server = FALSE)
+
+  # Grant-match table: pre-tick only rows where grant_id_in_pdf == TRUE.
+  output$fallback_pdfs_grant_match_table <- renderDT({
+    tbl <- fallback_pdfs_grant_match()
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(datatable(data.frame(info = "(no PDFs scanned yet)"),
+                       rownames = FALSE, selection = "none",
+                       options = list(dom = "t")))
+    }
+    pre <- which(isTRUE(tbl$grant_id_in_pdf) | tbl$grant_id_in_pdf == TRUE)
+    select_arg <- if (length(pre) > 0) pre else FALSE
+    .render_dt(tbl, checkbox = TRUE,
+               checkbox_input = "fallback_pdfs_grant_match_rows_selected",
+               select_all = select_arg,
+               linkcol = "linked_doi")
+  }, server = FALSE)
+
+  # ---- "Add ticked rows to CSV" buttons + observers --------------------
+
+  .pdf_findings_add_btn <- function(tbl, btn_id, label) {
+    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+    actionButton(btn_id, label, icon = icon("plus"),
+                 class = "btn-outline-primary")
+  }
+  output$strict_pdfs_reg_add_ui <- renderUI({
+    .pdf_findings_add_btn(strict_pdfs_reg(),
+                          "strict_pdfs_add_reg",
+                          "Add ticked registrations to CSV")
+  })
+  output$strict_pdfs_da_add_ui <- renderUI({
+    .pdf_findings_add_btn(strict_pdfs_da(),
+                          "strict_pdfs_add_da",
+                          "Add ticked data-availability rows to CSV")
+  })
+  output$fallback_pdfs_reg_add_ui <- renderUI({
+    .pdf_findings_add_btn(fallback_pdfs_reg(),
+                          "fallback_pdfs_add_reg",
+                          "Add ticked registrations to CSV")
+  })
+  output$fallback_pdfs_da_add_ui <- renderUI({
+    .pdf_findings_add_btn(fallback_pdfs_da(),
+                          "fallback_pdfs_add_da",
+                          "Add ticked data-availability rows to CSV")
+  })
+  output$fallback_pdfs_grant_match_add_ui <- renderUI({
+    .pdf_findings_add_btn(fallback_pdfs_grant_match(),
+                          "fallback_pdfs_add_grant_match",
+                          "Add ticked grant-match rows to CSV")
+  })
+
+  # Folder-open observers (one per kind).
+  observeEvent(input$strict_pdfs_open_folder, {
+    req(result())
+    folder <- file.path(.grant_folder(input$grant,
+                                      current_row()$family_name,
+                                      current_row()$pi_full_name),
+                        "strict_papers")
+    .open_folder_in_os(folder)
+  })
+  observeEvent(input$fallback_pdfs_open_folder, {
+    req(result())
+    folder <- file.path(.grant_folder(input$grant,
+                                      current_row()$family_name,
+                                      current_row()$pi_full_name),
+                        "fallback_papers")
+    .open_folder_in_os(folder)
+  })
+
+  # Build the per-section "ticked rows -> extra_rows() append" handlers.
+  # Registrations: linked_doi from filename match; merges via .build_csv_out.
+  .pdf_add_registrations <- function(tbl, sel_input, match_class, button_id) {
+    sel <- input[[sel_input]]
+    if (is.null(sel) || length(sel) == 0) {
+      showNotification("No registration rows ticked.",
+                       type = "warning", duration = 4)
+      return()
+    }
+    sel <- sel[sel >= 1 & sel <= nrow(tbl)]
+    if (length(sel) == 0) return()
+    rows <- tbl[sel, , drop = FALSE]
+    new_rows <- tibble::tibble(
+      source          = rows$registry,
+      source_api      = rows$registry,
+      match_class     = match_class,
+      doi             = NA_character_,
+      title           = rows$pdf_file,
+      url             = vapply(seq_len(nrow(rows)),
+                               function(i) .reg_verify_url(rows$registry[i],
+                                                           rows$id[i]) %||% "",
+                               character(1)),
+      matched_award   = input$grant,
+      matched_by      = ifelse(!is.na(rows$anchor) & nzchar(rows$anchor),
+                               sprintf("PDF extraction (anchor: %s)", rows$anchor),
+                               "PDF extraction (regex)"),
+      registration_id = rows$id,
+      registry        = rows$registry,
+      section         = rows$section,
+      sentence        = rows$sentence,
+      anchor          = rows$anchor,
+      confidence      = rows$confidence,
+      pdf_file        = rows$pdf_file,
+      linked_doi      = rows$linked_doi
+    )
+    extra_rows(bind_rows(extra_rows(), new_rows))
+    showNotification(sprintf("Added %d registration row%s to CSV.",
+                             nrow(new_rows),
+                             if (nrow(new_rows) == 1) "" else "s"),
+                     type = "message", duration = 4)
+  }
+
+  # Data availability: only category in {accession, doi, url} is addable;
+  # negative-statement rows are scan signals, not exportable as outputs.
+  # Each ticked deposit becomes its own CSV row with linked_doi="" so
+  # .build_csv_out's merge logic routes through the unlinked-append branch.
+  .pdf_add_data_availability <- function(tbl, sel_input, match_class) {
+    sel <- input[[sel_input]]
+    if (is.null(sel) || length(sel) == 0) {
+      showNotification("No data-availability rows ticked.",
+                       type = "warning", duration = 4)
+      return()
+    }
+    sel <- sel[sel >= 1 & sel <= nrow(tbl)]
+    if (length(sel) == 0) return()
+    rows <- tbl[sel, , drop = FALSE]
+    addable <- rows$category %in% c("accession", "doi", "url")
+    rows <- rows[addable, , drop = FALSE]
+    if (nrow(rows) == 0) {
+      showNotification("Ticked rows are negative statements (e.g. \"on request\") — not exportable.",
+                       type = "warning", duration = 6)
+      return()
+    }
+    new_rows <- tibble::tibble(
+      source          = rows$repository,
+      source_api      = rows$repository,
+      match_class     = match_class,
+      doi             = ifelse(grepl("^10\\.", rows$accession),
+                               rows$accession, NA_character_),
+      title           = NA_character_,
+      url             = vapply(seq_len(nrow(rows)),
+                               function(i) .da_verify_url(rows$repository[i],
+                                                          rows$accession[i]),
+                               character(1)),
+      matched_award   = input$grant,
+      matched_by      = "PDF extraction (data-availability scan)",
+      data_repository = rows$repository,
+      data_accession  = rows$accession,
+      section         = rows$section,
+      sentence        = rows$sentence,
+      confidence      = rows$confidence,
+      pdf_file        = rows$pdf_file,
+      cited_in_doi    = rows$linked_doi,
+      linked_doi      = ""
+    )
+    extra_rows(bind_rows(extra_rows(), new_rows))
+    showNotification(sprintf("Added %d data-availability row%s to CSV.",
+                             nrow(new_rows),
+                             if (nrow(new_rows) == 1) "" else "s"),
+                     type = "message", duration = 4)
+  }
+
+  # Fallback grant-match: per-PDF flag, merges into the source paper row
+  # via linked_doi.  Each ticked row carries grant_id_in_pdf=TRUE plus the
+  # extracted CIHR grant IDs string; .build_csv_out picks these up via the
+  # PDF_SIGNAL_COLS merge path.
+  .pdf_add_grant_match <- function(tbl, sel_input, match_class) {
+    sel <- input[[sel_input]]
+    if (is.null(sel) || length(sel) == 0) {
+      showNotification("No grant-match rows ticked.",
+                       type = "warning", duration = 4)
+      return()
+    }
+    sel <- sel[sel >= 1 & sel <= nrow(tbl)]
+    if (length(sel) == 0) return()
+    rows <- tbl[sel, , drop = FALSE]
+    new_rows <- tibble::tibble(
+      source           = "PDF text scan",
+      source_api       = "pdf_grant_match",
+      match_class      = match_class,
+      doi              = NA_character_,
+      title            = rows$pdf_file,
+      url              = NA_character_,
+      matched_award    = input$grant,
+      matched_by       = "PDF extraction (CIHR grant ID match)",
+      pdf_file         = rows$pdf_file,
+      linked_doi       = rows$linked_doi,
+      grant_id_in_pdf  = rows$grant_id_in_pdf,
+      cihr_grant_ids   = rows$extracted_cihr_grant_ids,
+      confidence       = rows$funding_confidence
+    )
+    extra_rows(bind_rows(extra_rows(), new_rows))
+    showNotification(sprintf("Added %d grant-match row%s to CSV.",
+                             nrow(new_rows),
+                             if (nrow(new_rows) == 1) "" else "s"),
+                     type = "message", duration = 4)
+  }
+
+  observeEvent(input$strict_pdfs_add_reg, {
+    .pdf_add_registrations(strict_pdfs_reg(),
+                           "strict_pdfs_reg_rows_selected",
+                           "strict_pdf_registration",
+                           "strict_pdfs_add_reg")
+  })
+  observeEvent(input$strict_pdfs_add_da, {
+    .pdf_add_data_availability(strict_pdfs_da(),
+                               "strict_pdfs_da_rows_selected",
+                               "strict_pdf_data_deposit")
+  })
+  observeEvent(input$fallback_pdfs_add_reg, {
+    .pdf_add_registrations(fallback_pdfs_reg(),
+                           "fallback_pdfs_reg_rows_selected",
+                           "fallback_pdf_registration",
+                           "fallback_pdfs_add_reg")
+  })
+  observeEvent(input$fallback_pdfs_add_da, {
+    .pdf_add_data_availability(fallback_pdfs_da(),
+                               "fallback_pdfs_da_rows_selected",
+                               "fallback_pdf_data_deposit")
+  })
+  observeEvent(input$fallback_pdfs_add_grant_match, {
+    .pdf_add_grant_match(fallback_pdfs_grant_match(),
+                         "fallback_pdfs_grant_match_rows_selected",
+                         "fallback_pdf_grant_match")
+  })
 
   # Gating: the PDF tab is only usable after the user has run a grant
   # search. search_trigger() increments once per confirmed search.
