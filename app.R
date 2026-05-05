@@ -1337,12 +1337,14 @@ server <- function(input, output, session) {
   strict_pdfs_reg <- reactive({
     s <- strict_pdfs_scan()
     if (length(s$scans) == 0) return(tibble::tibble())
-    .flatten_registrations(s$scans, pdf_link_candidates()$doi)
+    .dedup_by_keys(.flatten_registrations(s$scans, pdf_link_candidates()$doi),
+                   c("registry", "id"))
   })
   strict_pdfs_da <- reactive({
     s <- strict_pdfs_scan()
     if (length(s$scans) == 0) return(tibble::tibble())
-    .flatten_data_availability(s$scans, pdf_link_candidates()$doi)
+    .dedup_by_keys(.flatten_data_availability(s$scans, pdf_link_candidates()$doi),
+                   c("repository", "accession"))
   })
   fallback_pdfs_grant_match <- reactive({
     s <- fallback_pdfs_scan()
@@ -1350,6 +1352,30 @@ server <- function(input, output, session) {
     .summarise_grant_match(s$scans, pdf_link_candidates()$doi,
                            result()$award)
   })
+
+  # Drop within-table duplicates so the user only sees one row per
+  # registration ID / per accession, regardless of how many PDFs cite
+  # it.  Keeps the first occurrence; matching is case-insensitive and
+  # whitespace-trimmed.  `key_cols` are combined with "|" so the key is
+  # unique per (registry, id) / (repository, accession) and won't
+  # collide across schemes.
+  .dedup_by_keys <- function(tbl, key_cols) {
+    if (is.null(tbl) || nrow(tbl) == 0) return(tbl)
+    if (!all(key_cols %in% names(tbl))) return(tbl)
+    norm <- function(x) tolower(trimws(as.character(x %||% "")))
+    keys <- do.call(paste, c(lapply(key_cols, function(c) norm(tbl[[c]])),
+                             list(sep = "|")))
+    tbl[!duplicated(keys), , drop = FALSE]
+  }
+
+  # Strict tables already-shown identifiers — used to subtract the
+  # fallback-tab tables so they only surface PDF findings the strict
+  # tab hasn't already shown the user.
+  .ids_lower <- function(tbl, col) {
+    if (is.null(tbl) || nrow(tbl) == 0 || !col %in% names(tbl)) return(character(0))
+    v <- tolower(trimws(as.character(tbl[[col]])))
+    unique(v[nzchar(v)])
+  }
   # The set of PDF filenames the user has ticked in the "Current grant
   # in PDF" table.  Drives which PDFs the registrations + data-
   # availability tables on the fallback tab show — empty selection
@@ -1370,7 +1396,14 @@ server <- function(input, output, session) {
     if (length(keep) == 0) return(tibble::tibble())
     scans <- Filter(function(it) basename(it$file) %in% keep, s$scans)
     if (length(scans) == 0) return(tibble::tibble())
-    .flatten_registrations(scans, pdf_link_candidates()$doi)
+    out <- .dedup_by_keys(.flatten_registrations(scans, pdf_link_candidates()$doi),
+                          c("registry", "id"))
+    # Subtract IDs already shown on the strict PDFs tab.
+    strict_ids <- .ids_lower(strict_pdfs_reg(), "id")
+    if (length(strict_ids) && nrow(out)) {
+      out <- out[!(tolower(trimws(out$id)) %in% strict_ids), , drop = FALSE]
+    }
+    out
   })
   fallback_pdfs_da <- reactive({
     s <- fallback_pdfs_scan()
@@ -1379,7 +1412,13 @@ server <- function(input, output, session) {
     if (length(keep) == 0) return(tibble::tibble())
     scans <- Filter(function(it) basename(it$file) %in% keep, s$scans)
     if (length(scans) == 0) return(tibble::tibble())
-    .flatten_data_availability(scans, pdf_link_candidates()$doi)
+    out <- .dedup_by_keys(.flatten_data_availability(scans, pdf_link_candidates()$doi),
+                          c("repository", "accession"))
+    strict_acc <- .ids_lower(strict_pdfs_da(), "accession")
+    if (length(strict_acc) && nrow(out)) {
+      out <- out[!(tolower(trimws(out$accession)) %in% strict_acc), , drop = FALSE]
+    }
+    out
   })
 
   # ---- Per-tab UI outputs (status, manual-DL panel, errors) ------------
