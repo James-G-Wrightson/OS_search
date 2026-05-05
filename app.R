@@ -170,6 +170,80 @@ DOWNLOAD_BASE <- file.path(getwd(), "downloads")
   file.path(base, sprintf("%s_%s", grant_id, .pi_surname_slug(family_name, pi_full_name)))
 }
 
+# Auto-PDF-download tunables.  Threshold matches the fallback-tab UI default
+# (rows above 0.19 are pre-ticked + auto-downloaded); cap protects the user
+# from a runaway high-volume PI whose fallback list is hundreds long.
+AUTO_DL_FB_THRESHOLD <- 0.19
+AUTO_DL_CAP          <- 50L
+
+# Strict download set: union of all five strict buckets, restricted to rows
+# where the upstream surfaced an OA PDF URL.  Source-agnostic so future
+# clients that learn to expose oa_pdf_url for Crossref/DataCite/CT.gov are
+# picked up automatically.  Hard-capped at AUTO_DL_CAP.
+.auto_dl_strict_set <- function(r, cap = AUTO_DL_CAP) {
+  empty <- tibble::tibble(doi = character(), title = character(),
+                          oa_pdf_url = character())
+  if (is.null(r$strict)) return(empty)
+  rows <- bind_rows(r$strict)
+  if (is.null(rows) || nrow(rows) == 0 || !"oa_pdf_url" %in% names(rows)) {
+    return(empty)
+  }
+  rows <- rows[!is.na(rows$oa_pdf_url) & nzchar(rows$oa_pdf_url), , drop = FALSE]
+  if (nrow(rows) > cap) {
+    showNotification(sprintf(
+      "Strict auto-download capped at %d PDFs (%d had OA URLs). Drop the rest in manually.",
+      cap, nrow(rows)),
+      type = "warning", duration = 8)
+    rows <- rows[seq_len(cap), , drop = FALSE]
+  }
+  rows
+}
+
+# Fallback download set: rows whose similarity strictly exceeds `threshold`
+# AND who carry an oa_pdf_url AND whose DOI isn't already in the strict
+# download set (would download the same paper into both folders, then both
+# PDF tabs would surface duplicate findings).  Capped at AUTO_DL_CAP.
+# Score recomputed inline rather than reusing fallback_all() because that
+# reactive depends on result() — calling it from inside result() would
+# loop.  Doesn't honour input$dedup_doi: auto-DL fires on what the
+# upstream actually returned, not the dedup view.
+.auto_dl_fallback_set <- function(r, strict_dl,
+                                   threshold = AUTO_DL_FB_THRESHOLD,
+                                   cap = AUTO_DL_CAP) {
+  empty <- tibble::tibble(doi = character(), title = character(),
+                          oa_pdf_url = character(), similarity = numeric())
+  if (is.null(r$fallback)) return(empty)
+  rows <- bind_rows(lapply(names(r$fallback), function(nm) {
+    t <- r$fallback[[nm]]
+    if (is.null(t) || nrow(t) == 0) return(NULL)
+    t$source_api <- nm
+    t
+  }))
+  if (is.null(rows) || nrow(rows) == 0 || !"oa_pdf_url" %in% names(rows)) {
+    return(empty)
+  }
+  rows$similarity <- score_fallback(rows, r$grant)
+  rows <- rows[!is.na(rows$similarity) & rows$similarity > threshold, , drop = FALSE]
+  rows <- rows[!is.na(rows$oa_pdf_url) & nzchar(rows$oa_pdf_url), , drop = FALSE]
+  if (nrow(rows) == 0) return(empty)
+  strict_dois <- if (!is.null(strict_dl) && nrow(strict_dl) && "doi" %in% names(strict_dl)) {
+    d <- strict_dl$doi
+    unique(d[!is.na(d) & nzchar(d)])
+  } else character()
+  if (length(strict_dois) > 0 && "doi" %in% names(rows)) {
+    rows <- rows[is.na(rows$doi) | !nzchar(rows$doi) |
+                 !rows$doi %in% strict_dois, , drop = FALSE]
+  }
+  if (nrow(rows) > cap) {
+    showNotification(sprintf(
+      "Fallback auto-download capped at %d PDFs (%d above threshold %.2f). Lower the cap or raise the threshold.",
+      cap, nrow(rows), threshold),
+      type = "warning", duration = 8)
+    rows <- rows[seq_len(cap), , drop = FALSE]
+  }
+  rows
+}
+
 # Map a DOI prefix to its preprint server name when the DOI belongs to
 # a known self-archive registry.  Used to fill venue / is_oa / oa_status
 # for preprints whose upstream metadata records the work but leaves
@@ -370,6 +444,29 @@ server <- function(input, output, session) {
     show_modal_spinner(spin = "atom", text = "Querying Crossref, OpenAlex (author + ORCID), DataCite (PI + ORCID), ClinicalTrials.gov (keyword + PI), OpenAIRE, Europe PMC (grant + PI)...")
     r <- tryCatch(search_grant_all_sources(current_row()),
                   error = function(e) { remove_modal_spinner(); stop(e) })
+
+    # Auto-download accessible PDFs into per-grant subfolders for the two
+    # PDF-scan tabs to pick up.  Folded into result() so the user sees one
+    # spinner for "search + download" rather than two.  Idempotent: rows
+    # whose dest filename already exists are skipped, so manual drops
+    # survive a re-run.  download_pdf() short-circuits to ok=FALSE when
+    # OS_SEARCH_DISABLE_PDF_DOWNLOAD is set (smoke tests, dev iteration);
+    # the outcome tibbles are still populated, so the manual-DL panel
+    # renders correctly in tests.
+    strict_dir <- file.path(folder, "strict_papers")
+    fb_dir     <- file.path(folder, "fallback_papers")
+    strict_dl  <- .auto_dl_strict_set(r)
+    fb_dl      <- .auto_dl_fallback_set(r, strict_dl,
+                                        threshold = AUTO_DL_FB_THRESHOLD,
+                                        cap = AUTO_DL_CAP)
+    if (nrow(strict_dl) + nrow(fb_dl) > 0) {
+      update_modal_spinner(text = sprintf(
+        "Downloading %d strict + %d fallback PDFs (skipping any already on disk)...",
+        nrow(strict_dl), nrow(fb_dl)))
+    }
+    r$strict_dl_outcome   <- download_pdfs_for_rows(strict_dl, strict_dir)
+    r$fallback_dl_outcome <- download_pdfs_for_rows(fb_dl,     fb_dir)
+
     remove_modal_spinner()
     r
   })
