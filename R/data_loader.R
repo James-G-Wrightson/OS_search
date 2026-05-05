@@ -4,15 +4,17 @@ suppressPackageStartupMessages({
 
 .data_loader_file <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
 CACHE_PATH <- if (is.null(.data_loader_file) || !nzchar(.data_loader_file)) {
-  file.path(getwd(), "cache", "project_grants.rds")
+  file.path(getwd(), "data", "project_grants.rds")
 } else {
-  file.path(dirname(dirname(.data_loader_file)), "cache", "project_grants.rds")
+  file.path(dirname(dirname(.data_loader_file)), "data", "project_grants.rds")
 }
 
 load_project_grants <- function(cache_path = CACHE_PATH) {
   if (!file.exists(cache_path)) {
     stop("Grant cache not found at ", cache_path,
-         ". Run `Rscript build/refresh_cache.R` to build it.",
+         ". The bundled cache should ship with the repo at data/project_grants.rds. ",
+         "If you have CIHR Excel workbooks locally, you can rebuild it with ",
+         "`Rscript build/refresh_cache.R`.",
          call. = FALSE)
   }
   readRDS(cache_path)
